@@ -1,0 +1,210 @@
+/*
+ * C5i design system tokens.
+ * Source of truth: frontend/docs/design-system.md (section 4).
+ * Keep this file in sync with that document. Do not hard-code these values in components.
+ */
+
+:root {
+  /* Primitives: Brand */
+  --color-brand-50: #ede8ff;
+  --color-brand-75: #e5deff;
+  --color-brand-100: #ddd5ff;
+  --color-brand-200: #bdaaff;
+  --color-brand-300: #a07dff;
+  --color-brand-400: #8647ff;
+  --color-brand-500: #5500ba;
+  --color-brand-600: #6800e0;
+  --color-brand-700: #420093;
+  --color-brand-800: #2f006e;
+  --color-brand-900: #1e004a;
+  --color-brand-950: #110030;
+
+  /* Primitives: Neutral */
+  --color-neutral-50: #f6f6f6;
+  --color-neutral-75: #ebebeb;
+  --color-neutral-100: #e2e2e2;
+  --color-neutral-200: #c6c6c6;
+  --color-neutral-300: #a8a8a8;
+  --color-neutral-400: #8e8e8e;
+  --color-neutral-500: #747474;
+  --color-neutral-600: #5c5c5c;
+  --color-neutral-700: #444444;
+  --color-neutral-800: #2e2e2e;
+  --color-neutral-900: #181818;
+  --color-neutral-950: #0c0c0c;
+
+  /* Primitives: Base and Tertiary */
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-green-100: #d7f5dc;
+  --color-green-500: #0aa50e;
+  --color-green-700: #09590b;
+  --color-yellow-100: #fffad8;
+  --color-yellow-500: #ffce00;
+  --color-yellow-700: #624f03;
+  --color-orange-100: #fce6d5;
+  --color-orange-500: #ea792d;
+  --color-orange-700: #b85a17;
+  --color-red-100: #fadada;
+  --color-red-500: #e84646;
+  --color-red-700: #8f0b0b;
+
+  /* Typography */
+  --font-family-primary: "Degular", "Segoe UI", system-ui, sans-serif;
+  --font-family-secondary: "Segoe UI", system-ui, sans-serif;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --font-size-caption: 12px;        --line-height-caption: 16px;
+  --font-size-body-small: 13px;     --line-height-body-small: 20px;
+  --font-size-body-medium: 14px;    --line-height-body-medium: 20px;
+  --font-size-body-large: 16px;     --line-height-body-large: 24px;
+  --font-size-title-small: 18px;    --line-height-title-small: 24px;
+  --font-size-title-medium: 20px;   --line-height-title-medium: 28px;
+  --font-size-title-large: 23px;    --line-height-title-large: 32px;
+  --font-size-heading-6: 26px;      --line-height-heading-6: 32px;
+  --font-size-heading-5: 29px;      --line-height-heading-5: 36px;
+  --font-size-heading-4: 32px;      --line-height-heading-4: 40px;
+  --font-size-heading-3: 36px;      --line-height-heading-3: 44px;
+  --font-size-heading-2: 41px;      --line-height-heading-2: 52px;
+  --font-size-heading-1: 46px;      --line-height-heading-1: 56px;
+
+  /* Spacing */
+  --space-1: 4px;    --space-2: 8px;    --space-3: 12px;   --space-4: 16px;
+  --space-5: 20px;   --space-6: 24px;   --space-7: 32px;   --space-10: 40px;
+  --space-12: 48px;  --space-16: 64px;  --space-20: 80px;  --space-24: 96px;
+  --space-32: 128px; --space-40: 160px; --space-48: 192px; --space-56: 224px;
+  --space-64: 256px;
+
+  /* Radius */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* Semantic: Background */
+  --color-bg-default-primary: #ffffff;
+  --color-bg-default-secondary: #f6f6f6;
+  --color-bg-default-subtle: #ebebeb;
+  --color-bg-default-disabled: #e2e2e2;
+  --color-bg-default-inverse: #ffffff;
+  --color-bg-brand-primary: #5500ba;
+  --color-bg-brand-secondary: #6800e0;
+  --color-bg-brand-strong: #420093;
+  --color-bg-brand-subtle: #ede8ff;
+
+  /* Semantic: Text */
+  --color-text-default-primary: #000000;
+  --color-text-default-secondary: #2e2e2e;
+  --color-text-default-subtle: #5c5c5c;
+  --color-text-default-disabled: #c6c6c6;
+  --color-text-default-inverse: #ffffff;
+  --color-text-brand-primary: #5500ba;
+  --color-text-brand-secondary: #6800e0;
+  --color-text-brand-strong: #420093;
+  --color-text-brand-subtle: #bdaaff;
+
+  /* Semantic: Border */
+  --color-border-default-primary: #8e8e8e;
+  --color-border-default-strong: #181818;
+  --color-border-default-subtle: #f6f6f6;
+  --color-border-default-disabled: #e2e2e2;
+  --color-border-brand-primary: #5500ba;
+  --color-border-brand-strong: #420093;
+  --color-border-brand-subtle: #bdaaff;
+
+  /* Semantic: Icon */
+  --color-icon-primary: #000000;
+  --color-icon-secondary: #444444;
+  --color-icon-disabled: #e2e2e2;
+  --color-icon-inverse: #ffffff;
+
+  /* Semantic: Primary (interactive accent) */
+  --color-primary-default: #5500ba;
+  --color-primary-hover: #6800e0;
+  --color-primary-selected: #420093;
+  --color-primary-light: #a07dff;
+  --color-primary-subtle: #bdaaff;
+
+  /* Semantic: Status */
+  --color-status-success: #0aa50e;
+  --color-status-warning: #ffce00;
+  --color-status-error: #e84646;
+  --color-status-info: #5500ba;
+  --color-status-success-light: #d7f5dc;
+  --color-status-warning-light: #fffad8;
+  --color-status-error-light: #fadada;
+  --color-status-info-light: #ede8ff;
+}
+
+:root[data-theme="dark"] {
+  --color-bg-default-primary: #0c0c0c;
+  --color-bg-default-secondary: #181818;
+  --color-bg-default-subtle: #2e2e2e;
+  --color-bg-default-disabled: #444444;
+  --color-bg-default-inverse: #ffffff;
+
+  --color-text-default-primary: #ffffff;
+  --color-text-default-secondary: #e2e2e2;
+  --color-text-default-subtle: #a8a8a8;
+  --color-text-default-disabled: #747474;
+  --color-text-default-inverse: #000000;
+  --color-text-brand-subtle: #bdaaff;
+
+  --color-border-default-primary: #444444;
+  --color-border-default-strong: #c6c6c6;
+  --color-border-default-subtle: #f6f6f6;
+  --color-border-default-disabled: #181818;
+
+  --color-icon-primary: #ffffff;
+  --color-icon-secondary: #c6c6c6;
+  --color-icon-disabled: #747474;
+  --color-icon-inverse: #000000;
+
+  --color-primary-default: #8647ff;
+  --color-primary-hover: #a07dff;
+  --color-primary-selected: #bdaaff;
+  --color-primary-light: #5500ba;
+  --color-primary-subtle: #1e004a;
+
+  --color-status-info: #8647ff;
+}
+
+/* OS-level dark mode, unless the page explicitly sets data-theme="light". */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg-default-primary: #0c0c0c;
+    --color-bg-default-secondary: #181818;
+    --color-bg-default-subtle: #2e2e2e;
+    --color-bg-default-disabled: #444444;
+    --color-bg-default-inverse: #ffffff;
+
+    --color-text-default-primary: #ffffff;
+    --color-text-default-secondary: #e2e2e2;
+    --color-text-default-subtle: #a8a8a8;
+    --color-text-default-disabled: #747474;
+    --color-text-default-inverse: #000000;
+    --color-text-brand-subtle: #bdaaff;
+
+    --color-border-default-primary: #444444;
+    --color-border-default-strong: #c6c6c6;
+    --color-border-default-subtle: #f6f6f6;
+    --color-border-default-disabled: #181818;
+
+    --color-icon-primary: #ffffff;
+    --color-icon-secondary: #c6c6c6;
+    --color-icon-disabled: #747474;
+    --color-icon-inverse: #000000;
+
+    --color-primary-default: #8647ff;
+    --color-primary-hover: #a07dff;
+    --color-primary-selected: #bdaaff;
+    --color-primary-light: #5500ba;
+    --color-primary-subtle: #1e004a;
+
+    --color-status-info: #8647ff;
+  }
+}

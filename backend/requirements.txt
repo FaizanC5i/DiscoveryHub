@@ -1,2 +1,26 @@
+# Web framework and server
 fastapi==0.162.0
 uvicorn[standard]==0.54.0
+
+# Configuration (reads .env and environment variables)
+pydantic==2.14.3
+pydantic-settings==2.16.2
+
+# Database: Azure SQL via ODBC Driver 18 (requires the driver installed on the machine)
+sqlalchemy==2.1.8
+pyodbc==5.5.0
+alembic==1.20.1
+
+# Authentication
+argon2-cffi==25.1.0    # password hashing (Argon2id)
+pyjwt==2.15.1          # access tokens (HS256)
+email-validator==2.3.0 # EmailStr validation for sign-up and login
+
+# Rate limiting
+slowapi==0.1.10
+limits==5.8.0
+
+# Transitive pins that slowapi and email-validator rely on
+dnspython==2.9.2
+idna==3.20
+starlette==1.10.0
