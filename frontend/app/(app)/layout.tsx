@@ -30,12 +30,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
  * redirect; this is the backstop for a session that was revoked after the proxy ran.
  */
 async function AuthenticatedShell({ children }: { children: ReactNode }) {
-  const user = await getCurrentUser();
+  await getCurrentUser();
 
-  return (
-    <div className="flex min-h-dvh flex-col">
-      <AppHeader user={user} />
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10 sm:px-6 lg:px-8">{children}</main>
-    </div>
-  );
+  return <>{children}</>;
 }

@@ -37,6 +37,7 @@
   --color-border-disabled: var(--color-border-default-disabled);
   --color-border-brand: var(--color-border-brand-primary);
   --color-border-brand-strong: var(--color-border-brand-strong);
+  --color-border-brand-subtle: var(--color-border-brand-subtle);
 
   /* Interactive accent */
   --color-accent: var(--color-primary-default);

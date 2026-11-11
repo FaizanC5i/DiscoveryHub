@@ -120,3 +120,46 @@ export function GoogleIcon(props: IconProps) {
     </BaseIcon>
   );
 }
+
+export function PencilIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="m15 5 4 4" />
+    </BaseIcon>
+  );
+}
+
+export function ChevronLeftIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="m15 18-6-6 6-6" />
+    </BaseIcon>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </BaseIcon>
+  );
+}
+
+export function PanelRightIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M15 3v18" />
+    </BaseIcon>
+  );
+}
+
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="m6 9 6 6 6-6" />
+    </BaseIcon>
+  );
+}
