@@ -115,7 +115,10 @@ function redirectToLogin(): void {
 
 async function sendRequest(path: string, init: RequestInit): Promise<Response> {
   const headers = new Headers(init.headers);
-  if (init.body !== undefined && !headers.has("Content-Type")) {
+  const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
+  // FormData sets its own multipart Content-Type, including the boundary.
+  // Forcing application/json here would break every file upload.
+  if (init.body !== undefined && !isFormData && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -123,13 +126,9 @@ async function sendRequest(path: string, init: RequestInit): Promise<Response> {
     return await fetch(`${API_BASE_URL}${path}`, {
       ...init,
       headers,
-      // Send cookies to the API even though it is on another port.
-      // Cookies are shared between localhost ports, so the browser treats the
-      // API and the Next.js app as the same site and attaches them.
       credentials: "include",
     });
   } catch {
-    // fetch() only throws when the network fails or the server is not running.
     throw new ApiError("Cannot reach the server. Please try again.", 0, "NETWORK_ERROR");
   }
 }

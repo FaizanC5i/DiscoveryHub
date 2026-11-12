@@ -11,14 +11,19 @@ import type { ProjectInput } from "@/types/project";
 import type { ProjectFormValues } from "../types/projectForm";
 import { toProjectInput } from "../utils/projectInput";
 import { PROJECT_DESCRIPTION_MAX_LENGTH, validateProjectForm } from "../utils/validation";
+import { type ReactNode } from "react";
+
+
 
 interface ProjectFormProps {
   initialValues: ProjectFormValues;
   submitLabel: string;
-  /** Receives the API-ready values. Throw an error to show it in the form's alert. */
   onSubmit: (input: ProjectInput) => Promise<void>;
   onCancel: () => void;
+  /** Optional extra section, such as the document picker in create mode. */
+  documents?: ReactNode;
 }
+
 
 /**
  * The fields for creating or editing a project. It knows nothing about where the
@@ -27,7 +32,7 @@ interface ProjectFormProps {
  * Analogy: a paper intake form. The form does not decide where the file is filed.
  * It only checks that each box is filled in correctly before handing it over.
  */
-export function ProjectForm({ initialValues, submitLabel, onSubmit, onCancel }: ProjectFormProps) {
+export function ProjectForm({ initialValues, submitLabel, onSubmit, onCancel ,documents,}: ProjectFormProps) {
   const { values, errors, handleChange, handleBlur, handleSubmit, isSubmitting, submitError } =
     useForm<ProjectFormValues>({
       initialValues,
@@ -102,6 +107,8 @@ export function ProjectForm({ initialValues, submitLabel, onSubmit, onCancel }: 
           )}
         </FormField>
       </div>
+            {documents}
+
 
       <div className="flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:justify-end">
         <Button variant="outline" onClick={onCancel}>

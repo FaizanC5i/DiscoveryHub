@@ -7,6 +7,7 @@ import { apiRequest, isApiError } from "@/lib/api/client";
 import { API_PATHS } from "@/lib/api/endpoints";
 import { ROUTES } from "@/lib/constants";
 import type { Project } from "@/types/project";
+import { handleSessionError, sessionHeaders } from "@/lib/api/serverSession";
 
 /**
  * Server-only reads for projects. They forward the visitor's cookies, so the
@@ -16,19 +17,7 @@ import type { Project } from "@/types/project";
  * folder using the card the member holds, so the member sees only their own folders.
  */
 
-/** Reads the visitor's cookies and builds the headers the backend expects. */
-async function sessionHeaders(): Promise<HeadersInit> {
-  const cookieStore = await cookies();
-  return { Cookie: cookieStore.toString() };
-}
 
-/** Sends the visitor to sign in when the backend says the session is missing or expired. */
-function handleSessionError(error: unknown): never {
-  if (isApiError(error, "UNAUTHENTICATED") || isApiError(error, "SESSION_EXPIRED")) {
-    redirect(ROUTES.login);
-  }
-  throw error;
-}
 
 /** The signed-in user's most recently updated projects. */
 export async function listRecentProjects(limit: number): Promise<Project[]> {

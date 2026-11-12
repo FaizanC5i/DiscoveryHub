@@ -1,29 +1,38 @@
 "use client";
 
-import { useEffect, useId, useRef, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, type MouseEvent, type ReactNode, type SyntheticEvent } from "react";
 import { CloseIcon } from "@/components/icons";
 import { cn } from "@/lib/cn";
 
 interface ModalProps {
   open: boolean;
-  /** Called on Escape, the close button, or a click on the backdrop. The parent should set open to false. */
+  /** Called on Escape, the close button, or a backdrop click, unless dismissible is false. */
   onClose: () => void;
   title: string;
   children: ReactNode;
   className?: string;
+  /**
+   * When false, Escape, the backdrop, and the close button are ignored.
+   * Use this while work is running, such as an upload.
+   */
+  dismissible?: boolean;
 }
 
 /**
  * Dialog built on the browser's native <dialog> element.
  *
- * Analogy: a glass display case set in front of the shop counter. The native
- * dialog does the hard parts for us: it blocks the page behind it (the overlay),
- * keeps the keyboard focus inside, and closes on the Escape key. We only decide
- * when the case is open and what goes inside it.
- *
- * Children are rendered only while open, so a form inside starts fresh every time.
+ * Analogy: a glass display case in front of the counter. The native dialog
+ * blocks the page behind it and keeps focus inside. We decide when the case is
+ * open and whether a visitor is allowed to close it.
  */
-export function Modal({ open, onClose, title, children, className }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  className,
+  dismissible = true,
+}: ModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -34,15 +43,24 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
     if (!open && dialog.open) dialog.close();
   }, [open]);
 
-  // Escape closes the native dialog and fires "close". Passing that on keeps the parent's state in sync.
+  function requestClose() {
+    if (dismissible) onClose();
+  }
+
+  // Escape fires "cancel" before the browser closes the dialog. Preventing it keeps the dialog open.
+  function handleCancel(event: SyntheticEvent<HTMLDialogElement>) {
+    if (!dismissible) event.preventDefault();
+  }
+
   function handleBackdropClick(event: MouseEvent<HTMLDialogElement>) {
-    if (event.target === event.currentTarget) onClose();
+    if (event.target === event.currentTarget) requestClose();
   }
 
   return (
     <dialog
       ref={dialogRef}
       aria-labelledby={titleId}
+      onCancel={handleCancel}
       onClose={onClose}
       onClick={handleBackdropClick}
       className={cn(
@@ -58,9 +76,10 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
             </h2>
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
+              disabled={!dismissible}
               aria-label="Close"
-              className="inline-flex size-9 shrink-0 items-center justify-center rounded-control text-icon hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-border-brand-strong"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-control text-icon hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-border-brand-strong disabled:pointer-events-none disabled:opacity-50"
             >
               <CloseIcon className="size-5" />
             </button>

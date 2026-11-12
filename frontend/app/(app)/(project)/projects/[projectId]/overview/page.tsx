@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { ProjectSummaryCard } from "@/features/project-overview/components/ProjectSummaryCard";
-import { SourcesCard } from "@/features/project-overview/components/SourcesCard";
+import { listSourcesForCurrentUser } from "@/features/context/services/serverContextService";
+import { ProjectOverview } from "@/features/project-overview/components/ProjectOverview";
 import { requireProjectForCurrentUser } from "@/features/projects/services/serverProjectService";
 
 export const metadata: Metadata = {
@@ -10,9 +10,8 @@ export const metadata: Metadata = {
 export const instant = false;
 
 /**
- * Overview of one project. The data is fetched on the server with the visitor's
- * cookies, so only the owner can see it. A project that does not belong to them
- * shows the 404 page, the same as a project that does not exist.
+ * Server page: fetches the project and its sources with the visitor's cookies,
+ * then hands them to the client overview, which manages the panel and notes.
  */
 export default async function ProjectOverviewPage({
   params,
@@ -21,11 +20,7 @@ export default async function ProjectOverviewPage({
 }) {
   const { projectId } = await params;
   const project = await requireProjectForCurrentUser(projectId);
+  const sources = await listSourcesForCurrentUser(project.id);
 
-  return (
-    <div className="flex flex-col gap-6">
-      <ProjectSummaryCard project={project} />
-      <SourcesCard />
-    </div>
-  );
+  return <ProjectOverview project={project} sources={sources} />;
 }

@@ -16,6 +16,8 @@ from app.api.routes.auth import register_auth_error_handler, router as auth_rout
 from app.api.routes.projects import router as projects_router
 from app.core.config import get_settings
 from app.core.rate_limit import limiter
+from app.api.routes.context import router as context_router
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +36,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -63,6 +65,7 @@ register_auth_error_handler(app)
 # --- Routes -----------------------------------------------------------------------
 app.include_router(auth_router)
 app.include_router(projects_router)
+app.include_router(context_router)
 
 
 @app.get("/")

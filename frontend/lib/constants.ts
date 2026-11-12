@@ -16,6 +16,9 @@ export const ROUTES = {
   momAssistant: "/mom-assistant",
   /** Project overview page. Accepts the numeric project id from the API. */
   projectDetail: (projectId: number | string) => `/projects/${projectId}/overview`,
+    /** A tab inside a project, such as "overview". */
+  projectSection: (projectId: number | string, segment: string) =>
+    `/projects/${projectId}/${segment}`,
 } as const;
 
 /**

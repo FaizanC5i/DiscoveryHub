@@ -1,28 +1,15 @@
 import { Badge } from "@/components/ui/Badge";
-import { SectionCard } from "@/components/ui/SectionCard";
-import { ReviewLink } from "./ReviewLink";
+import { OverviewSection } from "./OverviewSection";
+import { ComingSoonAction, YetToBeDone } from "./YetToBeDone";
 
-interface ObjectivesCardProps {
-  items: string[];
-  isAiDraft: boolean;
-  reviewHref: string;
-}
-
-export function ObjectivesCard({ items, isAiDraft, reviewHref }: ObjectivesCardProps) {
+export function ObjectivesCard() {
   return (
-    <SectionCard
+    <OverviewSection
       title="Objectives"
-      badge={isAiDraft ? <Badge tone="brand">AI draft</Badge> : null}
-      action={<ReviewLink href={reviewHref} />}
+      badge={<Badge tone="brand">AI draft</Badge>}
+      action={<ComingSoonAction label="Review →" />}
     >
-      <ul className="flex flex-col gap-3">
-        {items.map((item) => (
-          <li key={item} className="flex gap-3 text-body-medium text-fg-secondary">
-            <span aria-hidden="true" className="mt-2 size-1.5 shrink-0 rounded-full bg-accent" />
-            {item}
-          </li>
-        ))}
-      </ul>
-    </SectionCard>
+      <YetToBeDone />
+    </OverviewSection>
   );
 }

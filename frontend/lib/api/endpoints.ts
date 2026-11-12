@@ -16,4 +16,16 @@ export const API_PATHS = {
     list: "/api/projects",
     detail: (projectId: number | string) => `/api/projects/${projectId}`,
   },
+    sources: {
+    list: (projectId: number | string) => `/api/projects/${projectId}/sources`,
+    detail: (projectId: number | string, sourceId: number | string) =>
+      `/api/projects/${projectId}/sources/${sourceId}`,
+    reprocess: (projectId: number | string, sourceId: number | string) =>
+      `/api/projects/${projectId}/sources/${sourceId}/reprocess`,
+  },
+    notes: {
+    list: (projectId: number | string) => `/api/projects/${projectId}/notes`,
+    detail: (projectId: number | string, noteId: string) =>
+      `/api/projects/${projectId}/notes/${noteId}`,
+  },
 } as const;

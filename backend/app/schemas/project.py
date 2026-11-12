@@ -15,7 +15,7 @@ from datetime import date, datetime, timezone
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
 
 NAME_MAX_LENGTH = 255
-DESCRIPTION_MAX_LENGTH = 5000
+DESCRIPTION_MAX_LENGTH = 12000
 
 
 def clean_name(value: str) -> str:

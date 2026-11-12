@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     login_rate_limit: str = "5/minute"
     forgot_password_rate_limit: str = "3/minute"
 
+        # --- Document storage and OCR ----------------------------------------
+    azure_storage_connection_string: str = ""
+    azure_storage_container: str = "project-sources"
+    upload_max_mb: int = 20
+
     @field_validator("jwt_secret_key")
     @classmethod
     def _secret_must_be_strong(cls, value: str) -> str:

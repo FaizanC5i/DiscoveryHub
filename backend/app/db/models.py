@@ -22,6 +22,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     NVARCHAR,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.mssql import DATETIME2
@@ -162,3 +163,70 @@ class Project(Base):
     )
 
     owner: Mapped[User] = relationship()
+
+
+class ContextSource(Base):
+    """
+    A document attached to a project. The original file is in Blob Storage, and
+    this row describes it. The extracted text is stored in ContextContent.
+
+    Analogy: the index card in the filing cabinet. It says what the document is
+    and where it sits in the warehouse (blob_path). The document itself is not
+    in the cabinet.
+    """
+
+    __tablename__ = "context_sources"
+    __table_args__ = (
+        Index("ix_context_sources_project_id_created_at", "project_id", "created_at"),
+        CheckConstraint(
+            "processing_status IN ('processing', 'ready', 'failed')",
+            name="ck_context_sources_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # No ondelete here on purpose: SQL Server rejects a second cascade path from users.
+    created_by: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    source_type: Mapped[str] = mapped_column(
+        NVARCHAR(30), nullable=False, server_default=text("'upload'")
+    )
+    title: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    original_filename: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    blob_path: Mapped[str] = mapped_column(NVARCHAR(500), nullable=False)
+    mime_type: Mapped[str] = mapped_column(NVARCHAR(100), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    processing_status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
+    failure_reason: Mapped[str | None] = mapped_column(NVARCHAR(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME2, nullable=False, server_default=UTC_NOW
+    )
+    # Soft delete: hidden from lists immediately, blob removed best-effort.
+    deleted_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+
+    content: Mapped["ContextContent | None"] = relationship(
+        back_populates="source", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class ContextContent(Base):
+    """The text extracted from one ContextSource. Only exists when extraction succeeded."""
+
+    __tablename__ = "context_content"
+    __table_args__ = (
+        UniqueConstraint("context_source_id", name="uq_context_content_source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    context_source_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("context_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    content_text: Mapped[str] = mapped_column(NVARCHAR(length="max"), nullable=False)
+    extraction_method: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME2, nullable=False, server_default=UTC_NOW
+    )
+
+    source: Mapped[ContextSource] = relationship(back_populates="content")

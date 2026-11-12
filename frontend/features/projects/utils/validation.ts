@@ -2,8 +2,7 @@ import type { FormErrors } from "@/hooks/useForm";
 import type { ProjectFormValues } from "../types/projectForm";
 
 /** Must match DESCRIPTION_MAX_LENGTH in backend/app/schemas/project.py. */
-export const PROJECT_DESCRIPTION_MAX_LENGTH = 5000;
-
+export const PROJECT_DESCRIPTION_MAX_LENGTH = 12000;
 /**
  * Client-side checks for the project form, shown inline as the user types.
  *
