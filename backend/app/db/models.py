@@ -11,17 +11,20 @@ blueprint in secret; you issue a new work order so every site (dev, staging,
 production) ends up in the same state.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     NVARCHAR,
     text,
 )
+from sqlalchemy.dialects.mssql import DATETIME2
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -119,3 +122,43 @@ class PasswordResetToken(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="password_reset_tokens")
+
+
+class Project(Base):
+    """
+    A discovery project owned by one user.
+
+    Analogy: a client folder in an agency's filing cabinet. The folder has a
+    label (name), a summary sheet (description), the agreed dates, and the name
+    of the clerk who opened it (owner_id). Every lookup starts from the owner, so
+    one person's folders are never shown to another person.
+    """
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        # The owner's list is always sorted by creation time, so this index serves the query directly.
+        Index("ix_projects_owner_id_created_at", "owner_id", "created_at"),
+        # The finish date cannot come before the start date. When either date is
+        # missing there is nothing to compare, so the check passes.
+        CheckConstraint(
+            "end_date IS NULL OR start_date IS NULL OR end_date >= start_date",
+            name="ck_projects_end_after_start",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    owner_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME2, nullable=False, server_default=UTC_NOW
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DATETIME2, nullable=False, server_default=UTC_NOW
+    )
+
+    owner: Mapped[User] = relationship()

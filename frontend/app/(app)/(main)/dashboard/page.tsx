@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { Button } from "@/components/ui/Button";
-import { PlusIcon } from "@/components/icons";
+import { CreateProjectButton } from "@/features/projects/components/CreateProjectButton";
 import { getCurrentUser } from "@/features/auth/services/currentUser";
 import { DashboardHeading } from "@/features/dashboard/components/DashboardHeading";
 import { QuickAccess } from "@/features/dashboard/components/QuickAccess";
@@ -10,6 +9,8 @@ import { getDashboardData } from "@/features/dashboard/services/dashboardService
 export const metadata: Metadata = {
   title: "Dashboard",
 };
+
+export const instant = false;
 
 export default async function DashboardPage() {
   const [user, { projects, quickAccess }] = await Promise.all([
@@ -23,14 +24,12 @@ export default async function DashboardPage() {
     <div className="flex flex-col gap-10">
       <DashboardHeading
         firstName={firstName}
-        action={
-          <Button className="self-start sm:self-auto">
-            <PlusIcon className="size-4" />
-            Start new project
-          </Button>
-        }
+        action={<CreateProjectButton className="self-start sm:self-auto" />}
       />
-      <RecentProjects projects={projects} />
+      <RecentProjects
+        projects={projects}
+        emptyAction={<CreateProjectButton label="Create your first project" />}
+      />
       <QuickAccess items={quickAccess} />
     </div>
   );

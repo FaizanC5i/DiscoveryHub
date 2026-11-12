@@ -1,12 +1,15 @@
+import type { ReactNode } from "react";
 import { EmptyState } from "@/components/feedback/EmptyState";
-import type { Project } from "../types/dashboard";
+import type { Project } from "@/types/project";
 import { ProjectCard } from "./ProjectCard";
 
 interface RecentProjectsProps {
   projects: Project[];
+  /** Shown in the empty state, for example a "Create your first project" button. */
+  emptyAction?: ReactNode;
 }
 
-export function RecentProjects({ projects }: RecentProjectsProps) {
+export function RecentProjects({ projects, emptyAction }: RecentProjectsProps) {
   return (
     <section aria-labelledby="recent-projects-heading" className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -27,7 +30,8 @@ export function RecentProjects({ projects }: RecentProjectsProps) {
       ) : (
         <EmptyState
           title="No projects yet"
-          description="Start a new project to begin discovery from your documents."
+          description="Create a project to start discovery from your documents."
+          action={emptyAction}
         />
       )}
     </section>

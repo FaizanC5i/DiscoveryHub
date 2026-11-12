@@ -3,6 +3,8 @@ import { AppHeader } from "@/components/layout/AppHeader";
 import { FullPageLoader } from "@/components/feedback/FullPageLoader";
 import { getCurrentUser } from "@/features/auth/services/currentUser";
 
+export const instant = false;
+
 /**
  * Layout for every signed-in page.
  *

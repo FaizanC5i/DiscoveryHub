@@ -2,6 +2,9 @@
 
 import { useState, type ChangeEvent, type FocusEvent, type FormEvent } from "react";
 
+/** Controls that feed the form: single-line inputs and multi-line textareas. */
+type FormControl = HTMLInputElement | HTMLTextAreaElement;
+
 export type FormErrors<T> = Partial<Record<keyof T, string>>;
 
 interface UseFormOptions<T extends Record<string, string>> {
@@ -26,7 +29,7 @@ export function useForm<T extends Record<string, string>>({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  function handleChange(event: ChangeEvent<HTMLInputElement>) {
+  function handleChange(event: ChangeEvent<FormControl>) {
     const key = event.target.name as keyof T;
     const nextValues = { ...values, [key]: event.target.value };
     setValues(nextValues);
@@ -36,7 +39,7 @@ export function useForm<T extends Record<string, string>>({
     }
   }
 
-  function handleBlur(event: FocusEvent<HTMLInputElement>) {
+  function handleBlur(event: FocusEvent<FormControl>) {
     const key = event.target.name as keyof T;
     setTouched((previous) => ({ ...previous, [key]: true }));
     setErrors(validate(values));

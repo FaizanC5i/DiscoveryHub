@@ -18,7 +18,6 @@ export function DashboardSkeleton() {
               <Skeleton className="size-10" />
               <Skeleton className="h-5 w-3/4" />
               <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-1.5 w-full" />
             </Card>
           ))}
         </div>

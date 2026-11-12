@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
 from app.api.routes.auth import register_auth_error_handler, router as auth_router
+from app.api.routes.projects import router as projects_router
 from app.core.config import get_settings
 from app.core.rate_limit import limiter
 
@@ -33,7 +34,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["Content-Type"],
 )
 
@@ -61,6 +62,7 @@ register_auth_error_handler(app)
 
 # --- Routes -----------------------------------------------------------------------
 app.include_router(auth_router)
+app.include_router(projects_router)
 
 
 @app.get("/")

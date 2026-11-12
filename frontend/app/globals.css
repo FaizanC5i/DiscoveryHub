@@ -19,6 +19,8 @@
   --color-surface-brand-hover: var(--color-bg-brand-secondary);
   --color-surface-brand-pressed: var(--color-bg-brand-strong);
   --color-surface-brand-subtle: var(--color-bg-brand-subtle);
+  /* Design system: Surface/Modal/Overlay maps to Color/Neutral/950 (drawn behind dialogs) */
+  --color-surface-overlay: var(--color-neutral-950);
 
   /* Text */
   --color-fg: var(--color-text-default-primary);

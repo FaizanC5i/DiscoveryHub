@@ -14,7 +14,8 @@ export const ROUTES = {
   dashboard: "/dashboard",
   exports: "/exports",
   momAssistant: "/mom-assistant",
-  project: (projectId: string) => `/projects/${projectId}`,
+  /** Project overview page. Accepts the numeric project id from the API. */
+  projectDetail: (projectId: number | string) => `/projects/${projectId}/overview`,
 } as const;
 
 /**

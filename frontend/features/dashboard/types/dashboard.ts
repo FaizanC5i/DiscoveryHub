@@ -1,15 +1,4 @@
-export type ProjectStatus = "in_progress" | "completed" | "not_started";
-
-export interface Project {
-  id: string;
-  name: string;
-  description: string;
-  status: ProjectStatus;
-  /** Percentage of discovery questions answered, from 0 to 100. */
-  discoveryCoverage: number;
-  /** ISO 8601 timestamp. */
-  updatedAt: string;
-}
+import type { Project } from "@/types/project";
 
 export type QuickAccessKey = "exports" | "mom-assistant";
 
@@ -21,6 +10,7 @@ export interface QuickAccessItem {
 }
 
 export interface DashboardData {
+  /** The signed-in user's most recently updated projects, from the API. */
   projects: Project[];
   quickAccess: QuickAccessItem[];
 }

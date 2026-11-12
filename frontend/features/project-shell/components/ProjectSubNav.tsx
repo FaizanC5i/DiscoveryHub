@@ -2,15 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeftIcon, PanelRightIcon } from "@/components/icons";
-import { Button, buttonStyles } from "@/components/ui/Button";
-import { useContextLibrary } from "@/features/context-library/hooks/useContextLibrary";
+import { ChevronLeftIcon } from "@/components/icons";
+import { buttonStyles } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { PROJECT_TABS } from "../constants";
 
 export function ProjectSubNav({ projectId }: { projectId: string }) {
   const pathname = usePathname();
-  const { isOpen, toggle } = useContextLibrary();
 
   return (
     <div className="border-b border-border-subtle bg-surface">
@@ -46,12 +44,7 @@ export function ProjectSubNav({ projectId }: { projectId: string }) {
           })}
         </nav>
 
-        <div className="hidden justify-end lg:flex">
-          <Button variant="outline" size="sm" onClick={toggle} aria-expanded={isOpen}>
-            <PanelRightIcon className="size-4" />
-            {isOpen ? "Hide context library" : "Show context library"}
-          </Button>
-        </div>
+        <div aria-hidden className="hidden lg:block" />
       </div>
     </div>
   );

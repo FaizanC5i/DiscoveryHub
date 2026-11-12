@@ -12,4 +12,8 @@ export const API_PATHS = {
     forgotPassword: "/api/auth/forgot-password",
     resetPassword: "/api/auth/reset-password",
   },
+  projects: {
+    list: "/api/projects",
+    detail: (projectId: number | string) => `/api/projects/${projectId}`,
+  },
 } as const;
