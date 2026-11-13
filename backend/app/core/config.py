@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     azure_storage_container: str = "project-sources"
     upload_max_mb: int = 20
 
+    # --- Chunking -----------------------------------------------------------
+    # Size of one chunk and how much of the previous chunk is repeated at its start.
+    chunk_max_chars: int = 1000
+    chunk_overlap_chars: int = 150
+
     @field_validator("jwt_secret_key")
     @classmethod
     def _secret_must_be_strong(cls, value: str) -> str:

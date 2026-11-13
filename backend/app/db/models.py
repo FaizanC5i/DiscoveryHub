@@ -21,6 +21,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     NVARCHAR,
     UniqueConstraint,
     text,
@@ -230,3 +231,40 @@ class ContextContent(Base):
     )
 
     source: Mapped[ContextSource] = relationship(back_populates="content")
+
+class ContextChunk(Base):
+    """
+    One overlapping slice of a ContextContent's text. Chunks are what the helper
+    agent tags to checkpoints, so each one must be traceable: content_text[start_char:end_char]
+    is exactly chunk_text. Rows are never updated or deleted; a changed document gets a new content row.
+
+    Analogy: cutting a printed report into numbered strips. Each strip has the page
+    line numbers printed on its edge (start_char, end_char), so anyone can lay it back
+    on the original and see exactly where it came from.
+    """
+
+    __tablename__ = "context_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "context_content_id", "chunk_number", name="uq_context_chunks_content_number"
+        ),
+        CheckConstraint("chunk_number >= 1", name="ck_context_chunks_chunk_number"),
+        CheckConstraint("start_char >= 0", name="ck_context_chunks_start_char"),
+        CheckConstraint("end_char > start_char", name="ck_context_chunks_end_after_start"),
+        CheckConstraint("char_count = end_char - start_char", name="ck_context_chunks_char_count"),
+        Index("ix_context_chunks_context_content_id", "context_content_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    context_content_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("context_content.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_text: Mapped[str] = mapped_column(NVARCHAR(length="max"), nullable=False)
+    start_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME2, nullable=False, server_default=UTC_NOW
+    )

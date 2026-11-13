@@ -7,6 +7,7 @@ Upload, in order:
 3. Save the original file to Blob Storage under a random key.
 4. Extract text (OCR for PDF and images).
 5. Save the source row and the content row in one transaction.
+6. Split the text into chunks and save them (see context_chunk_service).
 
 If anything after step 3 fails, the blob is deleted so nothing is orphaned.
 A recognition failure is not a crash: the source is kept as "failed" with a
@@ -24,6 +25,7 @@ from app.core.errors import api_error
 from app.core.file_types import FileKind, basename, check_content, resolve_kind
 from app.core.time import utc_now
 from app.db.models import ContextContent, ContextSource, Project, User
+from app.services import context_chunk_service
 from app.services.extraction.extractors import Extraction, ExtractionError, extract_text
 from app.services.storage.blob_storage import BlobNotFound, BlobStorage
 
@@ -69,6 +71,8 @@ def upload_source(
         storage.delete(blob_key)
         raise
 
+    if source.content is not None:
+        context_chunk_service.chunk_uploaded_content(db, source.content, source)
     return source
 
 
@@ -103,8 +107,19 @@ def reprocess_source(
         ) from None
 
     extraction, reason = _run_extraction(kind, data)
+    # Chunks point at exact characters of the stored text. If the text would change
+    # (or disappear) under existing chunks, refuse rather than leave them pointing at the wrong words.
+    if source.content is not None and context_chunk_service.has_chunks(db, source.content.id):
+        if extraction is None or extraction.text != source.content.content_text:
+            raise api_error(
+                409,
+                "CONTENT_HAS_CHUNKS",
+                "This document's text has already been chunked and would change. Upload it again as a new document.",
+            )
     _apply_result(source, extraction, reason)
     db.commit()
+    if source.content is not None:
+        context_chunk_service.chunk_uploaded_content(db, source.content, source)
     return source
 
 

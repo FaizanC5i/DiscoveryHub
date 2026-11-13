@@ -10,13 +10,18 @@ Routes handle HTTP. This module handles the rules and the database, so the same
 logic can be tested without starting a web server.
 """
 
+import logging
+
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.db.models import Project, User
+from app.db.models import ContextSource, Project, User
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate, check_date_order
+from app.services.storage.blob_storage import BlobStorage
+
+log = logging.getLogger(__name__)
 
 
 def create_project(db: Session, owner: User, payload: ProjectCreate) -> ProjectRead:
@@ -117,3 +122,32 @@ def _to_read(project: Project, owner_name: str) -> ProjectRead:
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
+
+
+def delete_project(db: Session, storage: BlobStorage, owner_id: int, project_id: int) -> bool:
+    """
+    Delete a project and everything under it. Returns False when the project is missing
+    or belongs to someone else.
+
+    The database removes the sources, their extracted text and their chunks through
+    its ON DELETE CASCADE rules. Original files live in Blob Storage, which the database
+    cannot reach, so their paths are collected first and removed after the commit.
+    """
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.owner_id == owner_id))
+    if project is None:
+        return False
+
+    blob_paths = list(db.scalars(select(ContextSource.blob_path).where(ContextSource.project_id == project_id)))
+
+    # Commit the database first: if a blob delete fails later, the project is still gone
+    # and only an orphaned file is left, which is safer than files pointing at nothing.
+    db.execute(delete(Project).where(Project.id == project_id))
+    db.commit()
+
+    for blob_path in blob_paths:
+        try:
+            storage.delete(blob_path)
+        except Exception:
+            log.warning("Could not delete blob %s for project %s", blob_path, project_id, exc_info=True)
+    return True
+

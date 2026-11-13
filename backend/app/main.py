@@ -17,6 +17,7 @@ from app.api.routes.projects import router as projects_router
 from app.core.config import get_settings
 from app.core.rate_limit import limiter
 from app.api.routes.context import router as context_router
+from app.api.routes.context_chunks import router as context_chunks_router
 
 
 logging.basicConfig(
@@ -66,6 +67,7 @@ register_auth_error_handler(app)
 app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(context_router)
+app.include_router(context_chunks_router)
 
 
 @app.get("/")

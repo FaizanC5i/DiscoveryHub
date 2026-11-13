@@ -22,3 +22,7 @@ export function updateProject(projectId: number, input: ProjectInput): Promise<P
     body: JSON.stringify(input),
   });
 }
+
+export function deleteProject(projectId: number): Promise<void> {
+  return apiRequest<void>(API_PATHS.projects.detail(projectId), { method: "DELETE" });
+}

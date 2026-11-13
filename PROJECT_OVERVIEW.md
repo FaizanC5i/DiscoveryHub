@@ -753,6 +753,75 @@ validateProjectForm(values) {
 
 ---
 
+### Document and Chunk Tables (migrations 005 and 006)
+
+Documents attached to a project flow down this chain: each source has at most one
+extracted text, and each text is split into chunks. Chunks keep their start and end
+offsets so any quote can be checked with `content_text[start_char:end_char]`.
+
+```
+┌───────────────────────────────────────────┐
+│ CONTEXT_SOURCES                           │
+├──────────────────────┬────────┬───────────┤
+│ bigint               │ id     │ PK        │
+│ bigint               │ project_id       │ FK → projects
+│ bigint               │ created_by       │ FK → users
+│ nvarchar_255         │ title            │
+│ nvarchar_255         │ original_filename│
+│ nvarchar_500         │ blob_path        │
+│ nvarchar_100         │ mime_type        │
+│ bigint               │ file_size_bytes  │
+│ nvarchar_20          │ processing_status│ processing / ready / failed
+│ nvarchar_500         │ failure_reason   │
+│ datetime2            │ created_at       │
+│ datetime2            │ deleted_at       │ soft delete
+└───────────────────────────────────────────┘
+                     │ 1
+                     ▼ 0..1
+┌───────────────────────────────────────────┐
+│ CONTEXT_CONTENT                           │
+├──────────────────────┬────────────────────┤
+│ bigint               │ id               │ PK
+│ bigint               │ context_source_id│ FK, UK → context_sources
+│ nvarchar_max         │ content_text     │ extracted text
+│ nvarchar_50          │ extraction_method│
+│ datetime2            │ created_at       │
+└───────────────────────────────────────────┘
+                     │ 1
+                     ▼ 0..n
+┌───────────────────────────────────────────┐
+│ CONTEXT_CHUNKS                            │
+├──────────────────────┬────────────────────┤
+│ bigint               │ id               │ PK
+│ bigint               │ context_content_id│ FK → context_content, UK(content, number)
+│ int                  │ chunk_number     │ starts at 1, document order
+│ nvarchar_max         │ chunk_text       │ exactly content_text[start:end]
+│ int                  │ start_char       │ 0-based offset of first character
+│ int                  │ end_char         │ offset just after last character
+│ int                  │ char_count       │ = end_char - start_char
+│ int                  │ page_number      │ NULL when the extractor gives no page
+│ datetime2            │ created_at       │
+└───────────────────────────────────────────┘
+```
+
+#### `context_chunks`
+| Column | Type | Constraint | Notes |
+|--------|------|-----------|-------|
+| `id` | BIGINT | PK, Identity | Auto-increment |
+| `context_content_id` | BIGINT | NOT NULL, FK | Points to context_content(id) CASCADE |
+| `chunk_number` | INT | NOT NULL, CHECK >= 1 | Document order, starts at 1 |
+| `chunk_text` | NVARCHAR(MAX) | NOT NULL | Exact slice of content_text |
+| `start_char` | INT | NOT NULL, CHECK >= 0 | First character, 0-based |
+| `end_char` | INT | NOT NULL, CHECK > start_char | Offset just after the last character |
+| `char_count` | INT | NOT NULL, CHECK = end_char - start_char | Redundant on purpose, checked by the database |
+| `page_number` | INT | NULL | From the last "Page N:" marker before start_char |
+| `created_at` | DATETIME2 | NOT NULL, default SYSUTCDATETIME() | UTC timestamp |
+
+**Constraints and indexes:**
+- UNIQUE `(context_content_id, chunk_number)`: no duplicate numbering, and a second chunking call cannot insert twice
+- Index on `context_content_id`
+- Rows are never updated or deleted. A changed document gets a new content row and new chunks.
+
 ## How to Scale This Application
 
 ### Horizontal Scaling

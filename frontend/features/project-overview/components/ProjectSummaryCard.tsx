@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { DeleteProjectButton } from "@/features/projects/components/DeleteProjectButton";
 import { EditProjectButton } from "@/features/projects/components/EditProjectButton";
 import type { Project } from "@/types/project";
 import { formatProjectDate } from "../utils/formatProjectDate";
@@ -31,6 +32,7 @@ export function ProjectSummaryCard({ project }: ProjectSummaryCardProps) {
             Previous Artifacts
           </Button>
           <EditProjectButton project={project} />
+          <DeleteProjectButton project={project} />
         </div>
       </div>
 

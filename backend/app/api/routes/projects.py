@@ -8,17 +8,19 @@ door security (CurrentUser) who is asking, then passes the request to the clerk
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import CurrentUser
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
 from app.services import project_service
+from app.services.storage.blob_storage import BlobStorage, get_blob_storage
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 DbSession = Annotated[Session, Depends(get_db)]
+Storage = Annotated[BlobStorage, Depends(get_blob_storage)]
 
 # How many projects the dashboard may ask for in one call. Keeps one request from loading everything.
 MAX_LIST_LIMIT = 50
@@ -69,3 +71,12 @@ def update_project(
     if project is None:
         raise _not_found()
     return project
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(project_id: int, user: CurrentUser, db: DbSession, storage: Storage) -> Response:
+    """Delete the project with its documents, extracted text, chunks and original files."""
+    if not project_service.delete_project(db, storage, user.id, project_id):
+        raise _not_found()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
