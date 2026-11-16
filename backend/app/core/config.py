@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     # Chunks per agent call. Larger batches cut the number of calls and the repeated checkpoint prompt.
     mapping_batch_size: int = 20
 
+    # --- Pillar dispatch ----------------------------------------------------
+    # Right after each Helper batch is saved, its new mappings are grouped per pillar agent.
+    # Until the pillar agents exist, each package is written as JSON under backend/<this folder>.
+    # Empty turns dispatch off.
+    pillar_dispatch_outbox: str = "agent_outbox"
+
     @field_validator("jwt_secret_key")
     @classmethod
     def _secret_must_be_strong(cls, value: str) -> str:

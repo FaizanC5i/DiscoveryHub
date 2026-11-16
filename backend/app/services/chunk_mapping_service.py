@@ -36,6 +36,7 @@ from app.db.models import (
     Project,
 )
 from app.db.session import get_session_factory
+from app.services import pillar_dispatch_service
 from app.services.agent_client import AgentError, call_helper_agent, call_with_retry
 from app.services.mapping_payload_service import build_mapping_request
 from app.services.mapping_validation_service import (
@@ -141,7 +142,22 @@ def map_batch(project_id: int, chunk_ids: list[int]) -> BatchOutcome | None:
         outcome.agent_run_id, time.monotonic() - started, chunk_ids,
         outcome.kept, outcome.dropped, outcome.skipped_existing,
     )
+    if outcome.kept:
+        _dispatch_to_pillar_agents(agent_run_id)
     return outcome
+
+
+def _dispatch_to_pillar_agents(agent_run_id: int) -> None:
+    """
+    Send this batch's new mappings to the pillar agents. The mappings are already committed,
+    so a dispatch problem is logged and never undoes or fails the mapping.
+    """
+    if not get_settings().pillar_dispatch_outbox:
+        return
+    try:
+        pillar_dispatch_service.dispatch_mapping_run(agent_run_id)
+    except Exception:
+        log.exception("Could not dispatch mapping batch %s to the pillar agents", agent_run_id)
 
 
 def retry_chunk_ids(db: Session, content_id: int) -> list[int]:
