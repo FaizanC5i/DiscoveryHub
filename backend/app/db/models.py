@@ -339,12 +339,21 @@ class Agent(Base):
 
 
 class AgentRun(Base):
-    """One call to the agent. Every mapping points at the run that produced it."""
+    """
+    One execution of an agent. Helper checkpoint-mapping runs are linked to the Helper Agent
+    and to their batch. Their per-chunk links are the mappings, not agent_run_chunks.
+    """
 
     __tablename__ = "agent_runs"
     __table_args__ = (
         Index("ix_agent_runs_project_id_status", "project_id", "status"),
+        Index("ix_agent_runs_agent_id", "agent_id"),
+        Index("ix_agent_runs_batch_id", "batch_id"),
+        Index("ix_agent_runs_trigger_source_id", "trigger_source_id", mssql_where=text("trigger_source_id IS NOT NULL")),
         CheckConstraint("status IN ('running', 'succeeded', 'failed')", name="ck_agent_runs_status"),
+        CheckConstraint("run_type IN ('checkpoint_mapping', 'user_discovery')", name="ck_agent_runs_run_type"),
+        CheckConstraint("attempt_count >= 0", name="ck_agent_runs_attempt_count"),
+        CheckConstraint("input_payload IS NULL OR ISJSON(input_payload) = 1", name="ck_agent_runs_input_payload_json"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -352,16 +361,76 @@ class AgentRun(Base):
         BigInteger, ForeignKey("projects.id", ondelete="CASCADE", name="fk_agent_runs_project_id_projects"),
         nullable=False,
     )
+    agent_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("agents.id", name="fk_agent_runs_agent_id_agents"), nullable=True
+    )
+    batch_id: Mapped[str | None] = mapped_column(NVARCHAR(50), nullable=True)
+    # NO ACTION: the project cascade already reaches agent_runs, so a second cascade path would be rejected.
+    trigger_source_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("context_sources.id", name="fk_agent_runs_trigger_source_id_context_sources"),
+        nullable=True,
+    )
     run_type: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False, server_default=text("'checkpoint_mapping'"))
     status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
     model: Mapped[str | None] = mapped_column(NVARCHAR(100), nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_payload: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
     raw_output: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
     error_message: Mapped[str | None] = mapped_column(NVARCHAR(1000), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
     completed_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+
+
+class AgentRunCheckpoint(Base):
+    """A per-checkpoint result inside one run. Helper runs do not write here."""
+
+    __tablename__ = "agent_run_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("agent_run_id", "checkpoint_id", name="uq_agent_run_checkpoints_run_checkpoint"),
+        Index("ix_agent_run_checkpoints_checkpoint_id", "checkpoint_id"),
+        CheckConstraint(
+            "status IN ('PENDING', 'ANSWERED', 'NO_EVIDENCE', 'FAILED')", name="ck_agent_run_checkpoints_status"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    agent_run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("agent_runs.id", ondelete="CASCADE", name="fk_agent_run_checkpoints_agent_run_id"),
+        nullable=False,
+    )
+    checkpoint_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("discovery_checkpoints.id", name="fk_agent_run_checkpoints_checkpoint_id"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False, server_default=text("'PENDING'"))
+
+
+class AgentRunChunk(Base):
+    """The chunks sent into one run. Helper runs link their chunks through mappings instead."""
+
+    __tablename__ = "agent_run_chunks"
+    __table_args__ = (
+        UniqueConstraint("agent_run_id", "context_chunk_id", name="uq_agent_run_chunks_run_chunk"),
+        Index("ix_agent_run_chunks_context_chunk_id", "context_chunk_id"),
+        Index("ix_agent_run_chunks_mapping_id", "mapping_id", mssql_where=text("mapping_id IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    agent_run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("agent_runs.id", ondelete="CASCADE", name="fk_agent_run_chunks_agent_run_id"),
+        nullable=False,
+    )
+    context_chunk_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("context_chunks.id", name="fk_agent_run_chunks_context_chunk_id"), nullable=False
+    )
+    mapping_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("context_checkpoint_mappings.id", name="fk_agent_run_chunks_mapping_id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
 
 
 class ContextCheckpointMapping(Base):

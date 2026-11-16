@@ -16,6 +16,7 @@ Correctness:
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 
 from fastapi import BackgroundTasks
@@ -98,7 +99,13 @@ def map_batch(project_id: int, chunk_ids: list[int]) -> BatchOutcome | None:
         payload = build_mapping_request(db, project_id, chunks)
         checkpoints = {cp["id"]: cp for cp in payload["discovery_checkpoints"]}
         helper_agent_id = _helper_agent_id(db)
-        run = AgentRun(project_id=project_id, status="running", chunk_count=len(chunks))
+        run = AgentRun(
+            project_id=project_id,
+            agent_id=helper_agent_id,
+            batch_id=_new_batch_id(),
+            status="running",
+            chunk_count=len(chunks),
+        )
         db.add(run)
         db.commit()
         agent_run_id = run.id
@@ -186,6 +193,10 @@ def _claim_chunks(db: Session, chunk_ids: list[int]) -> list[tuple[int, list[int
     for chunk_id, project_id in rows:
         grouped.setdefault(project_id, []).append(chunk_id)
     return list(grouped.items())
+
+
+def _new_batch_id() -> str:
+    return f"BATCH-{utc_now():%Y%m%d}-{uuid.uuid4().hex[:8].upper()}"
 
 
 def _load_chunks(db: Session, chunk_ids: list[int]) -> list[dict]:

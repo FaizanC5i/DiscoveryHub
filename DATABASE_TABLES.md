@@ -6,7 +6,7 @@ each table stores, its columns, its keys, and one sample row. The samples use ma
 of writing.
 
 The schema is created only by Alembic migrations in `backend/alembic/versions/`. Current
-revision: `008_mapping_agents_and_evidence`.
+revision: `009_rebuild_agent_tables`.
 
 ---
 
@@ -15,19 +15,20 @@ revision: `008_mapping_agents_and_evidence`.
 | Table | Rows | Purpose | Written by |
 |---|---|---|---|
 | `users` | 34 | Accounts that can sign in | Sign-up, password reset |
-| `refresh_tokens` | 112 | Long-lived sign-in sessions | Login, refresh, logout |
+| `refresh_tokens` | 115 | Long-lived sign-in sessions | Login, refresh, logout |
 | `password_reset_tokens` | 4 | One-time password reset links | Forgot-password flow |
-| `projects` | 24 | Discovery projects, one owner each | Project create, edit, delete |
-| `context_sources` | 15 | Each uploaded document | Upload, retry, delete |
-| `context_content` | 15 | The text extracted from a document | Upload, retry |
-| `context_chunks` | 189 | Overlapping pieces of the text | Chunking, mapping job |
+| `projects` | 26 | Discovery projects, one owner each | Project create, edit, delete |
+| `context_sources` | 17 | Each uploaded document | Upload, retry, delete |
+| `context_content` | 17 | The text extracted from a document | Upload, retry |
+| `context_chunks` | 199 | Overlapping pieces of the text | Chunking, mapping job |
 | `discovery_pillars` | 3 | The three discovery areas (User, Data, Tech) | Migration 007 (fixed data) |
 | `discovery_checkpoints` | 15 | The questions each pillar must answer | Migration 007 (fixed data) |
-| `agents` | 1 | Who produced a mapping (the Helper Agent) | Migration 008 (seeded) |
-| `agent_runs` | 28 | One row per call to an agent | Mapping job |
-| `agent_run_chunks` | 0 | Reserved for linking runs to chunks. Not written yet. | Nothing yet |
-| `context_checkpoint_mappings` | 349 | A chunk tagged with a checkpoint | Mapping job |
-| `mapping_evidence` | 349 | The quote that justifies each mapping | Mapping job |
+| `agents` | 4 | Who produced a mapping or run: the Helper Agent and the three pillar agents | Migrations 008 and 009 (seeded) |
+| `agent_runs` | 30 | One row per agent execution | Mapping job |
+| `agent_run_checkpoints` | 0 | Per-checkpoint result inside one run. Helper runs do not write here. | Nothing yet |
+| `agent_run_chunks` | 0 | Chunks sent into one run. Helper runs do not write here. | Nothing yet |
+| `context_checkpoint_mappings` | 367 | A chunk tagged with a checkpoint | Mapping job |
+| `mapping_evidence` | 367 | The quote that justifies each mapping | Mapping job |
 | `alembic_version` | 1 | The migration revision the database is at | Alembic |
 
 ---
@@ -36,10 +37,15 @@ revision: `008_mapping_agents_and_evidence`.
 
 ```
 users ──< projects ──< context_sources ──< context_content ──< context_chunks
-  │          │                                                     │
-  │          ├──< agent_runs                                       │
-  │          │                                                     │
-  │          └──< context_checkpoint_mappings >── context_chunks ──┘
+  │          │              │                                       │
+  │          │              └── (trigger_source_id)                 │
+  │          │                                                      │
+  │          ├──< agent_runs ──< agent_run_checkpoints              │
+  │          │       │  └──< agent_run_chunks ──────────────────────┤
+  │          │       │          └── (mapping_id)                    │
+  │          │       └── agents                                     │
+  │          │                                                      │
+  │          └──< context_checkpoint_mappings >── context_chunks ───┘
   │                     │         │          │
   │                     │         │          └── discovery_checkpoints ──> discovery_pillars
   │                     │         └── agent_runs
@@ -280,69 +286,104 @@ mapping job reads the active ones fresh on every run.
 
 ## agents
 
-Who produced a mapping. Every mapping points here so the author is always traceable.
+Who produced a mapping or a run. Every mapping points here so the author is always traceable.
+The Helper Agent covers all pillars, so its `pillar_id` is NULL. Each pillar agent is linked to
+one pillar.
 
 | Column | Type | Nullable | Default | Meaning |
 |---|---|---|---|---|
 | `id` | BIGINT identity | no | | Primary key |
-| `agent_code` | NVARCHAR(50) | no | | Unique code, e.g. `HELPER_AGENT` |
+| `agent_code` | NVARCHAR(50) | no | | Unique code: `HELPER_AGENT`, `USER_AGENT`, `DATA_AGENT`, `TECH_AGENT` |
 | `name` | NVARCHAR(255) | no | | Display name |
-| `pillar_id` | BIGINT | yes | | FK to `discovery_pillars.id`. NULL for the Helper Agent, which covers all pillars. |
+| `pillar_id` | BIGINT | yes | | FK to `discovery_pillars.id`. NULL for the Helper Agent. |
 | `created_at` | DATETIME2 | no | UTC now | When added |
 
-Constraint: each pillar has at most one agent (unique among non-NULL `pillar_id`).
+Constraints: `agent_code` unique. Each pillar has at most one agent: unique among non-NULL `pillar_id`.
 
-**Sample row**
+**Rows**
 
-| id | agent_code | name | pillar_id | created_at |
-|---|---|---|---|---|
-| 1 | HELPER_AGENT | Discovery Hub Helper Agent | NULL | 2026-11-02 00:00 |
+| id | agent_code | name | pillar_id |
+|---|---|---|---|
+| 1 | HELPER_AGENT | Discovery Hub Helper Agent | NULL |
+| 5 | USER_AGENT | User Discovery Agent | 1 |
+| 6 | DATA_AGENT | Data Discovery Agent | 2 |
+| 7 | TECH_AGENT | Tech Discovery Agent | 3 |
+
+The pillar agents were re-seeded when migration 009 was tested with a rollback, so they have IDs
+5 to 7. The Helper Agent keeps ID 1. Code should look agents up by `agent_code`, not by ID.
 
 ---
 
 ## agent_runs
 
-One row per call to an agent. Used for checkpoint mapping. The row is created as `running`
-and then updated to `succeeded` or `failed`.
+One row per agent execution. The row is created as `running` and then updated to `succeeded` or
+`failed`. Checkpoint-mapping runs point at the Helper Agent and their batch. The 7 older
+`user_discovery` runs have no agent, because that agent has been removed.
 
 | Column | Type | Nullable | Default | Meaning |
 |---|---|---|---|---|
-| `id` | BIGINT identity | no | | Primary key. Also the batch ID for a mapping run. |
+| `id` | BIGINT identity | no | | Primary key |
 | `project_id` | BIGINT | no | | FK to `projects.id`, cascade delete |
-| `run_type` | NVARCHAR(50) | no | 'checkpoint_mapping' | What the run did |
+| `agent_id` | BIGINT | yes | | FK to `agents.id`: the agent that ran. NULL for the removed User Discovery runs. |
+| `batch_id` | NVARCHAR(50) | yes | | Readable batch name, e.g. `BATCH-20261116-1A2B3C4D`. Older runs have `LEGACY-<id>`. |
+| `trigger_source_id` | BIGINT | yes | | FK to `context_sources.id`: the document that caused the run. Not used yet. |
+| `run_type` | NVARCHAR(50) | no | 'checkpoint_mapping' | `checkpoint_mapping` or `user_discovery` |
 | `status` | NVARCHAR(20) | no | | `running`, `succeeded` or `failed` |
 | `model` | NVARCHAR(100) | yes | | Model the agent reported, e.g. `gpt-5.6-luna` |
 | `chunk_count` | INT | no | | Number of chunks sent in the batch |
+| `attempt_count` | INT | no | 0 | Attempts made. Must be 0 or more. |
 | `prompt_tokens` | INT | yes | | Tokens in the request, from the agent's metadata |
 | `completion_tokens` | INT | yes | | Tokens in the reply |
-| `raw_output` | NVARCHAR(MAX) | yes | | The agent's parsed output, stored as JSON text |
+| `input_payload` | NVARCHAR(MAX) | yes | | The request sent to the agent, as JSON text. Must be valid JSON. Not written yet. |
+| `raw_output` | NVARCHAR(MAX) | yes | | The agent's output, stored as JSON text. This is the only copy of the reply. |
 | `error_message` | NVARCHAR(1000) | yes | | Why the run failed, e.g. `Agent5i returned HTTP 401.` |
 | `started_at` | DATETIME2 | no | UTC now | When the run started |
 | `completed_at` | DATETIME2 | yes | | When it finished |
 
-Constraint: `status` is one of the three values above.
+Indexes: `(project_id, status)`, `(agent_id)`, `(batch_id)`, `(trigger_source_id)` where not NULL.
 
 **Sample row**
 
-| id | project_id | run_type | status | model | chunk_count | prompt_tokens | completion_tokens | error_message | started_at | completed_at |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 70 | 12 | checkpoint_mapping | succeeded | gpt-5.6-luna | 1 | 13240 | 2794 | NULL | 2026-11-02 09:30 | 2026-11-02 09:30 |
+| id | project_id | agent_id | batch_id | run_type | status | model | chunk_count | attempt_count | prompt_tokens | completion_tokens | error_message | started_at | completed_at |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 70 | 12 | 1 | BATCH-20261102-7F3A9C21 | checkpoint_mapping | succeeded | gpt-5.6-luna | 1 | 0 | 13240 | 2794 | NULL | 2026-11-02 09:30 | 2026-11-02 09:30 |
+
+---
+
+## agent_run_checkpoints
+
+The result for each checkpoint inside one run. Intended for per-checkpoint agent runs. The
+Helper Agent does not write here: its results are the mappings, which point at the run through
+`agent_run_id`.
+
+| Column | Type | Nullable | Default | Meaning |
+|---|---|---|---|---|
+| `id` | BIGINT identity | no | | Primary key |
+| `agent_run_id` | BIGINT | no | | FK to `agent_runs.id`, cascade delete |
+| `checkpoint_id` | BIGINT | no | | FK to `discovery_checkpoints.id` |
+| `status` | NVARCHAR(20) | no | 'PENDING' | `PENDING`, `ANSWERED`, `NO_EVIDENCE` or `FAILED` |
+
+Constraints: unique `(agent_run_id, checkpoint_id)`. Index on `checkpoint_id`.
+
+**Sample row:** none yet.
 
 ---
 
 ## agent_run_chunks
 
-Intended to record which chunks each run was sent. The table exists, but nothing writes to it
-yet, so it has no rows.
+The chunks sent into one run. The Helper Agent does not write here: each mapping already records
+its run, so the chunk-to-run link is available through `context_checkpoint_mappings.agent_run_id`.
 
 | Column | Type | Nullable | Default | Meaning |
 |---|---|---|---|---|
 | `id` | BIGINT identity | no | | Primary key |
 | `agent_run_id` | BIGINT | no | | FK to `agent_runs.id`, cascade delete |
 | `context_chunk_id` | BIGINT | no | | FK to `context_chunks.id`. No cascade, to avoid a second delete path. |
+| `mapping_id` | BIGINT | yes | | FK to `context_checkpoint_mappings.id`: the mapping that caused the chunk to be sent. No cascade. |
 | `created_at` | DATETIME2 | no | UTC now | When linked |
 
-Constraint: unique `(agent_run_id, context_chunk_id)`.
+Constraints: unique `(agent_run_id, context_chunk_id)`. Indexes on `context_chunk_id`, and on
+`mapping_id` where not NULL.
 
 **Sample row:** none yet.
 
@@ -412,9 +453,7 @@ Used by Alembic to know which migration the database has reached. Do not edit it
 
 | Column | Type | Meaning |
 |---|---|---|
-| `version_num` | VARCHAR(32) | Current revision, e.g. `008_mapping_agents_and_evidence` |
-
-**Sample row:** `008_mapping_agents_and_evidence`
+| `version_num` | VARCHAR(32) | Current revision: `009_rebuild_agent_tables` |
 
 ---
 
@@ -426,3 +465,4 @@ Used by Alembic to know which migration the database has reached. Do not edit it
   remain in the database. Projects are hard-deleted.
 - **Immutable chunks:** chunk rows are never updated or deleted. A changed document gets new content and new chunks.
 - **Mapping history:** mappings are deactivated, not deleted, so the history of what was tagged stays available.
+- **Agent history:** the 7 `user_discovery` runs and their reply text remain in `agent_runs` after the feature was removed.
