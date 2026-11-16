@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     chunk_max_chars: int = 1000
     chunk_overlap_chars: int = 150
 
+    # --- Agent5i Helper Agent (checkpoint mapping) -------------------------
+    # Credentials come from the environment only. An empty value makes mapping fail
+    # with a configuration error, which is never retried.
+    agent5i_webhook_url: str = ""
+    agent5i_username: str = ""
+    agent5i_password: str = ""
+    agent5i_agent_name: str = "Discovery Hub Helper Agent"
+    agent5i_source_input_name: str = "source_files"
+    agent5i_timeout_seconds: int = 180
+    # Chunks per agent call. Larger batches cut the number of calls and the repeated checkpoint prompt.
+    mapping_batch_size: int = 20
+
     @field_validator("jwt_secret_key")
     @classmethod
     def _secret_must_be_strong(cls, value: str) -> str:

@@ -252,7 +252,12 @@ class ContextChunk(Base):
         CheckConstraint("start_char >= 0", name="ck_context_chunks_start_char"),
         CheckConstraint("end_char > start_char", name="ck_context_chunks_end_after_start"),
         CheckConstraint("char_count = end_char - start_char", name="ck_context_chunks_char_count"),
+        CheckConstraint(
+            "mapping_status IN ('PENDING', 'IN_PROGRESS', 'MAPPED', 'NO_MATCH', 'FAILED')",
+            name="ck_context_chunks_mapping_status",
+        ),
         Index("ix_context_chunks_context_content_id", "context_content_id"),
+        Index("ix_context_chunks_content_mapping_status", "context_content_id", "mapping_status"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -268,3 +273,171 @@ class ContextChunk(Base):
     created_at: Mapped[datetime] = mapped_column(
         DATETIME2, nullable=False, server_default=UTC_NOW
     )
+    # Mapping progress, owned by the mapping job: PENDING -> IN_PROGRESS -> MAPPED / NO_MATCH / FAILED.
+    mapping_status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False, server_default=text("'PENDING'"))
+    mapping_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    mapped_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+    mapping_error: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+
+
+class DiscoveryPillar(Base):
+    """One of the three discovery areas (User, Data, Tech). Fixed reference data seeded by migration 007."""
+
+    __tablename__ = "discovery_pillars"
+    __table_args__ = (UniqueConstraint("code", name="uq_discovery_pillars_code"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    code: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
+    name: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+
+
+class DiscoveryCheckpoint(Base):
+    """A question the discovery must answer, such as USER01 or TECH03. Fixed reference data."""
+
+    __tablename__ = "discovery_checkpoints"
+    __table_args__ = (UniqueConstraint("code", name="uq_discovery_checkpoints_code"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    pillar_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("discovery_pillars.id", name="fk_discovery_checkpoints_pillar_id"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
+    name: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    question: Mapped[str] = mapped_column(NVARCHAR(length="max"), nullable=False)
+    why_it_matters: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    priority: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
+    readiness_required_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    feeds_details: Mapped[str | None] = mapped_column(NVARCHAR(255), nullable=True)
+    config_json: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
+
+    pillar: Mapped[DiscoveryPillar] = relationship()
+
+
+class Agent(Base):
+    """
+    An author of mappings. Each pillar has one agent. The Helper Agent has no pillar
+    (pillar_id NULL) and is the author of every checkpoint mapping.
+    """
+
+    __tablename__ = "agents"
+    __table_args__ = (
+        UniqueConstraint("agent_code", name="uq_agents_agent_code"),
+        Index("ux_agents_pillar_id", "pillar_id", unique=True, mssql_where=text("pillar_id IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    agent_code: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False)
+    name: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    pillar_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("discovery_pillars.id", name="fk_agents_pillar_id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+
+class AgentRun(Base):
+    """One call to the agent. Every mapping points at the run that produced it."""
+
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        Index("ix_agent_runs_project_id_status", "project_id", "status"),
+        CheckConstraint("status IN ('running', 'succeeded', 'failed')", name="ck_agent_runs_status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE", name="fk_agent_runs_project_id_projects"),
+        nullable=False,
+    )
+    run_type: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False, server_default=text("'checkpoint_mapping'"))
+    status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
+    model: Mapped[str | None] = mapped_column(NVARCHAR(100), nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_output: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(NVARCHAR(1000), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+    completed_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+
+
+class ContextCheckpointMapping(Base):
+    """
+    A chunk tagged with a checkpoint by an agent. Only one active row may exist per
+    (project, chunk, checkpoint). Inactive rows are kept as history.
+    """
+
+    __tablename__ = "context_checkpoint_mappings"
+    __table_args__ = (
+        Index(
+            "uq_mappings_active_project_chunk_checkpoint",
+            "project_id", "context_chunk_id", "checkpoint_id",
+            unique=True, mssql_where=text("is_active = 1"),
+        ),
+        Index("ix_mappings_project_id_chunk", "project_id", "context_chunk_id"),
+        Index(
+            "ix_mappings_project_id_checkpoint_active", "project_id", "checkpoint_id",
+            mssql_where=text("is_active = 1"),
+        ),
+        CheckConstraint(
+            "(is_active = 1 AND deactivated_at IS NULL) OR (is_active = 0 AND deactivated_at IS NOT NULL)",
+            name="ck_mappings_active_state",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE", name="fk_mappings_project_id_projects"),
+        nullable=False,
+    )
+    # NO ACTION on the chunk, checkpoint, run and agent keys: one cascade path into this table is enough.
+    context_chunk_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("context_chunks.id", name="fk_mappings_context_chunk_id"), nullable=False
+    )
+    checkpoint_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("discovery_checkpoints.id", name="fk_mappings_checkpoint_id"), nullable=False
+    )
+    agent_run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("agent_runs.id", name="fk_mappings_agent_run_id"), nullable=False
+    )
+    mapped_by_agent_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("agents.id", name="fk_mappings_mapped_by_agent_id"), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+    deactivated_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+
+    checkpoint: Mapped[DiscoveryCheckpoint] = relationship()
+    evidence: Mapped[list["MappingEvidence"]] = relationship(back_populates="mapping")
+
+
+class MappingEvidence(Base):
+    """
+    The quote that justifies a mapping, with its position in the content:
+    content_text[evidence_start_char:evidence_end_char] == evidence_quote.
+    """
+
+    __tablename__ = "mapping_evidence"
+    __table_args__ = (
+        CheckConstraint("evidence_end_char > evidence_start_char", name="ck_mapping_evidence_end_after_start"),
+        CheckConstraint(
+            "evidence_end_char - evidence_start_char = LEN(evidence_quote)", name="ck_mapping_evidence_length"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    mapping_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("context_checkpoint_mappings.id", ondelete="CASCADE", name="fk_mapping_evidence_mapping_id"),
+        nullable=False,
+    )
+    evidence_quote: Mapped[str] = mapped_column(NVARCHAR(length="max"), nullable=False)
+    reason: Mapped[str] = mapped_column(NVARCHAR(length="max"), nullable=False)
+    evidence_start_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence_end_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+    mapping: Mapped[ContextCheckpointMapping] = relationship(back_populates="evidence")

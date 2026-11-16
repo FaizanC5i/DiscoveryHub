@@ -49,7 +49,7 @@ def create_chunks_for_content(db: Session, content_id: int, owner_id: int) -> Ch
     Split the content into chunks and save them. Calling it again returns the chunks
     that already exist, so a double click or a retry cannot create duplicates.
     """
-    content, source = _load_owned_content(db, content_id, owner_id)
+    content, source = load_owned_content(db, content_id, owner_id)
     if source.deleted_at is not None:
         raise api_error(409, "SOURCE_DELETED", "This document was deleted, so it cannot be chunked.")
     try:
@@ -75,7 +75,7 @@ def has_chunks(db: Session, content_id: int) -> bool:
 
 
 def list_chunks(db: Session, owner_id: int, content_id: int) -> list[ContextChunk]:
-    content, source = _load_owned_content(db, content_id, owner_id)
+    content, source = load_owned_content(db, content_id, owner_id)
     if source.deleted_at is not None:
         raise api_error(404, "CONTENT_NOT_FOUND", "Document text not found.")
     return _list_chunks(db, content.id)
@@ -133,7 +133,7 @@ def _chunk_content(db: Session, content: ContextContent, source: ContextSource) 
     return ChunkResult(chunks=_list_chunks(db, content_id), created=True)
 
 
-def _load_owned_content(db: Session, content_id: int, owner_id: int) -> tuple[ContextContent, ContextSource]:
+def load_owned_content(db: Session, content_id: int, owner_id: int) -> tuple[ContextContent, ContextSource]:
     """
     Load the content only if its project belongs to the caller. A missing row and
     someone else's row give the same 404, so ids cannot be probed.
@@ -166,3 +166,8 @@ def _mark_failed(db: Session, source_id: int) -> None:
     source.processing_status = "failed"
     source.failure_reason = FAILURE_REASON
     db.commit()
+
+
+def chunk_ids_for_content(db: Session, content_id: int) -> list[int]:
+    return [chunk.id for chunk in _list_chunks(db, content_id)]
+

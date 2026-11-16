@@ -7,13 +7,13 @@ hands the request to the service. It contains no rules.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import CurrentUser
 from app.schemas.context_chunk import ChunkRead
-from app.services import context_chunk_service
+from app.services import chunk_mapping_service, context_chunk_service
 
 router = APIRouter(prefix="/api/context-content/{content_id}/chunks", tags=["context"])
 
@@ -24,6 +24,7 @@ DbSession = Annotated[Session, Depends(get_db)]
 def create_chunks(
     content_id: int,
     response: Response,
+    background: BackgroundTasks,
     user: CurrentUser,
     db: DbSession,
 ) -> list[ChunkRead]:
@@ -33,6 +34,8 @@ def create_chunks(
     """
     result = context_chunk_service.create_chunks_for_content(db, content_id, user.id)
     response.status_code = 201 if result.created else 200
+    if result.created:
+        chunk_mapping_service.enqueue_chunk_mapping(background, [chunk.id for chunk in result.chunks])
     return [ChunkRead.model_validate(chunk) for chunk in result.chunks]
 
 

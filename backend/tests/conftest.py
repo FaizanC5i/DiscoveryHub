@@ -46,3 +46,12 @@ def make_user() -> Iterator[Callable[[str], SignedInUser]]:
             if user is not None:
                 db.delete(user)
         db.commit()
+
+
+@pytest.fixture(autouse=True)
+def no_background_mapping(monkeypatch):
+    """Keep the real Helper Agent out of every test. Mapping tests call run_mapping_job directly."""
+    from app.services import chunk_mapping_service
+
+    monkeypatch.setattr(chunk_mapping_service, "enqueue_chunk_mapping", lambda background, chunk_ids: None)
+
