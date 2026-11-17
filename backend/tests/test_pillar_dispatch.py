@@ -165,3 +165,30 @@ def test_mapping_job_dispatch_failure_is_logged_not_raised(monkeypatch):
     monkeypatch.setattr(pillar_dispatch_service, "dispatch_mapping_run", _boom)
 
     chunk_mapping_service._dispatch_to_pillar_agents(70)  # must not raise
+
+
+def test_each_checkpoint_carries_its_existing_answer_next_to_the_new_chunks():
+    answers = {405: {"answer": "Stakeholders: CFO, COO, Head of Stores, IT lead, Finance lead.", "status": "APPROVED"}}
+    PILLARS[405] = (1, "USER")  # USER05 Stakeholders, which already has an answer
+    SORT[405] = 5
+    try:
+        rows = [_row(500, 405, 91), _row(501, 401, 92)]
+        packages = group_batch_by_pillar(BATCH, rows, AGENTS, created_at="t", existing_answers=answers)
+    finally:
+        PILLARS.pop(405)
+        SORT.pop(405)
+
+    user = _by_code(packages)["USER"]
+    by_id = {c["checkpoint_id"]: c for c in user["checkpoints"]}
+    assert by_id[405]["existing_answer"].startswith("Stakeholders: CFO")
+    assert by_id[405]["existing_answer_status"] == "APPROVED"
+    assert by_id[405]["chunks"][0]["chunk_text"] == "text of chunk 91"
+    assert by_id[401]["existing_answer"] is None  # no answer yet
+    assert by_id[401]["existing_answer_status"] is None
+
+
+def test_existing_answers_are_optional():
+    tech = _by_code(_group([_row(500, 301, 91)]))["TECH"]
+
+    assert tech["checkpoints"][0]["existing_answer"] is None
+

@@ -5,6 +5,8 @@ When the Helper Agent finishes a batch, its mappings (chunk -> checkpoint) are s
 transaction. Right after that commit, this module:
 
 1. reads the mappings that batch created, with the chunk text, the source and the evidence,
+   plus the existing answer of every checkpoint involved (project_checkpoint_answers), so the
+   agent can update that answer instead of starting again,
 2. looks up the pillar of each mapping's checkpoint (USER, DATA, TECH),
 3. groups them into one package per pillar agent,
 4. hands each package to the outbox.
@@ -41,6 +43,7 @@ from app.db.models import (
     DiscoveryCheckpoint,
     DiscoveryPillar,
     MappingEvidence,
+    ProjectCheckpointAnswer,
 )
 from app.db.session import get_session_factory
 
@@ -64,13 +67,14 @@ def dispatch_mapping_run(helper_agent_run_id: int, send: Sender | None = None) -
             raise ValueError(f"Agent run {helper_agent_run_id} does not exist.")
         rows = _batch_rows(db, helper_agent_run_id)
         agents = _pillar_agents(db)
+        answers = _existing_answers(db, run.project_id, {row["checkpoint_id"] for row in rows})
         batch = {
             "project_id": run.project_id,
             "batch_id": run.batch_id or f"RUN-{run.id}",
             "helper_agent_run_id": run.id,
         }
 
-    packages = group_batch_by_pillar(batch, rows, agents, created_at=utc_now().isoformat())
+    packages = group_batch_by_pillar(batch, rows, agents, created_at=utc_now().isoformat(), existing_answers=answers)
     _check_nothing_left_out(rows, packages, helper_agent_run_id)
 
     sender = send or json_file_outbox()
@@ -87,7 +91,13 @@ def dispatch_mapping_run(helper_agent_run_id: int, send: Sender | None = None) -
 # --- pure logic (no database), unit tested ------------------------------------------
 
 
-def group_batch_by_pillar(batch: dict, rows: list[dict], agents: dict[int, dict], created_at: str) -> list[dict]:
+def group_batch_by_pillar(
+    batch: dict,
+    rows: list[dict],
+    agents: dict[int, dict],
+    created_at: str,
+    existing_answers: dict[int, dict] | None = None,
+) -> list[dict]:
     """
     Build one package per pillar that has at least one mapping in this batch.
 
@@ -96,12 +106,16 @@ def group_batch_by_pillar(batch: dict, rows: list[dict], agents: dict[int, dict]
             pillar, and the chunk's text and source. evidence_quote is None when a mapping
             has no evidence row.
     agents: pillar_id -> {"agent_id", "agent_code"} for the pillar agents that exist.
+    existing_answers: checkpoint_id -> {"answer", "status"} from project_checkpoint_answers. Each
+            checkpoint carries its existing answer (None when there is none yet) next to the new
+            chunks, so the agent updates that answer instead of starting from nothing.
 
     A chunk mapped to checkpoints of two pillars goes into both packages. A chunk mapped to
     two checkpoints of the same pillar appears under each checkpoint, and is counted once.
     Only checkpoints this batch touched are listed, because each batch adds to what the
     agent already has.
     """
+    existing_answers = existing_answers or {}
     packages: dict[int, dict] = {}
     checkpoint_slots: dict[tuple[int, int], dict] = {}
     chunk_slots: dict[tuple[int, int, int], dict] = {}
@@ -136,6 +150,8 @@ def group_batch_by_pillar(batch: dict, rows: list[dict], agents: dict[int, dict]
                 "question": row["question"],
                 "why_it_matters": row["why_it_matters"],
                 "sort_order": row["sort_order"],
+                "existing_answer": (existing_answers.get(row["checkpoint_id"]) or {}).get("answer"),
+                "existing_answer_status": (existing_answers.get(row["checkpoint_id"]) or {}).get("status"),
                 "chunks": [],
             }
             checkpoint_slots[checkpoint_key] = checkpoint
@@ -275,6 +291,23 @@ def _batch_rows(db: Session, helper_agent_run_id: int) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def _existing_answers(db: Session, project_id: int, checkpoint_ids: set[int]) -> dict[int, dict]:
+    """The current answer of each checkpoint in this project (project_checkpoint_answers)."""
+    if not checkpoint_ids:
+        return {}
+    rows = db.execute(
+        select(
+            ProjectCheckpointAnswer.checkpoint_id,
+            ProjectCheckpointAnswer.current_answer,
+            ProjectCheckpointAnswer.status,
+        ).where(
+            ProjectCheckpointAnswer.project_id == project_id,
+            ProjectCheckpointAnswer.checkpoint_id.in_(checkpoint_ids),
+        )
+    ).all()
+    return {checkpoint_id: {"answer": answer, "status": status} for checkpoint_id, answer, status in rows}
 
 
 def _pillar_agents(db: Session) -> dict[int, dict]:
