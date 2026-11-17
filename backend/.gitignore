@@ -18,5 +18,5 @@ __pycache__/
 # Templates with placeholders only (safe to commit)
 !.env.example
 
-# Testing outbox of pillar dispatch (contains client document text)
+# Local agent packages (pillar dispatch and BRD outbox — contains client document text). Never commit.
 agent_outbox/

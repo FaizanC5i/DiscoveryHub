@@ -359,7 +359,11 @@ class AgentRun(Base):
         Index("ix_agent_runs_batch_id", "batch_id"),
         Index("ix_agent_runs_trigger_source_id", "trigger_source_id", mssql_where=text("trigger_source_id IS NOT NULL")),
         CheckConstraint("status IN ('running', 'succeeded', 'failed')", name="ck_agent_runs_status"),
-        CheckConstraint("run_type IN ('checkpoint_mapping', 'user_discovery')", name="ck_agent_runs_run_type"),
+        CheckConstraint(
+            "run_type IN ('checkpoint_mapping', 'user_discovery', 'brd_generate', 'brd_regenerate', 'brd_clarify')",
+            name="ck_agent_runs_run_type",
+        ),
+        Index("ix_agent_runs_project_artifact_id", "project_artifact_id", mssql_where=text("project_artifact_id IS NOT NULL")),
         CheckConstraint("attempt_count >= 0", name="ck_agent_runs_attempt_count"),
         CheckConstraint("input_payload IS NULL OR ISJSON(input_payload) = 1", name="ck_agent_runs_input_payload_json"),
     )
@@ -391,6 +395,16 @@ class AgentRun(Base):
     error_message: Mapped[str | None] = mapped_column(NVARCHAR(1000), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
     completed_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+    # BRD runs only: the BRD, and the section for a single-section regenerate or clarify.
+    # NO ACTION: the project cascade already reaches agent_runs.
+    project_artifact_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("project_artifacts.id", name="fk_agent_runs_project_artifact_id"), nullable=True
+    )
+    project_artifact_section_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("project_artifact_sections.id", name="fk_agent_runs_project_artifact_section_id"),
+        nullable=True,
+    )
 
 
 class AgentRunCheckpoint(Base):
@@ -736,3 +750,238 @@ class CheckpointAnswerEvidence(Base):
     checkpoint_answer: Mapped[ProjectCheckpointAnswer] = relationship(back_populates="evidence")
     answer_version: Mapped[CheckpointAnswerVersion] = relationship()
     context_chunk: Mapped[ContextChunk] = relationship()
+
+
+# --- BRD (artifact generation), migration 012 ------------------------------------------------
+
+
+class ArtifactType(Base):
+    """A kind of document Discovery Hub can write (BRD first). Linked to the agent that writes it."""
+
+    __tablename__ = "artifact_types"
+    __table_args__ = (UniqueConstraint("code", name="uq_artifact_types_code"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False)
+    name: Mapped[str] = mapped_column(NVARCHAR(150), nullable=False)
+    description: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    agent_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("agents.id", name="fk_artifact_types_agent_id"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+
+class ArtifactSection(Base):
+    """One section of an artifact template, such as the BRD's "Scope". Configuration rows."""
+
+    __tablename__ = "artifact_sections"
+    __table_args__ = (
+        UniqueConstraint("artifact_type_id", "section_key", name="uq_artifact_sections_type_key"),
+        CheckConstraint(
+            "fallback_questions IS NULL OR ISJSON(fallback_questions) = 1",
+            name="ck_artifact_sections_fallback_questions_json",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    artifact_type_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifact_types.id", name="fk_artifact_sections_artifact_type_id"), nullable=False
+    )
+    section_key: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False)
+    title: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
+    prompt: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    fallback_questions: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+
+class ArtifactSectionCheckpoint(Base):
+    """Which checkpoint's approved answer feeds which section. A section with no rows reads every answer."""
+
+    __tablename__ = "artifact_section_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("artifact_section_id", "checkpoint_id", name="uq_artifact_section_checkpoints"),
+        Index("ix_artifact_section_checkpoints_checkpoint_id", "checkpoint_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    artifact_section_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("artifact_sections.id", ondelete="CASCADE", name="fk_artifact_section_checkpoints_section_id"),
+        nullable=False,
+    )
+    checkpoint_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("discovery_checkpoints.id", name="fk_artifact_section_checkpoints_checkpoint_id"),
+        nullable=False,
+    )
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+
+class ProjectArtifact(Base):
+    """One artifact (for example the BRD) of one project: document status and approved version."""
+
+    __tablename__ = "project_artifacts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "artifact_type_id", name="uq_project_artifacts_project_type"),
+        CheckConstraint(
+            "status IN ('NOT_STARTED', 'DRAFT', 'IN_REVIEW', 'APPROVED')", name="ck_project_artifacts_status"
+        ),
+        CheckConstraint("current_version >= 0", name="ck_project_artifacts_current_version"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE", name="fk_project_artifacts_project_id"),
+        nullable=False,
+    )
+    artifact_type_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifact_types.id", name="fk_project_artifacts_artifact_type_id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(NVARCHAR(30), nullable=False, server_default=text("'NOT_STARTED'"))
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    instructions: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    created_by: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", name="fk_project_artifacts_created_by"), nullable=False
+    )
+    approved_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", name="fk_project_artifacts_approved_by"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+    updated_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+
+class ProjectArtifactSection(Base):
+    """
+    The current content of one section of a project's artifact. Like project_checkpoint_answers,
+    it only changes when the user approves a proposal or edits the section.
+    """
+
+    __tablename__ = "project_artifact_sections"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_artifact_id", "artifact_section_id", name="uq_project_artifact_sections_artifact_section"
+        ),
+        CheckConstraint(
+            "status IN ('NOT_STARTED', 'DRAFT', 'PENDING_REVIEW', 'NEEDS_CLARIFICATION', 'APPROVED')",
+            name="ck_project_artifact_sections_status",
+        ),
+        CheckConstraint("source IS NULL OR source IN ('AGENT', 'USER')", name="ck_project_artifact_sections_source"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_artifact_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("project_artifacts.id", ondelete="CASCADE", name="fk_project_artifact_sections_artifact_id"),
+        nullable=False,
+    )
+    artifact_section_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifact_sections.id", name="fk_project_artifact_sections_section_id"), nullable=False
+    )
+    current_content: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    status: Mapped[str] = mapped_column(NVARCHAR(30), nullable=False, server_default=text("'NOT_STARTED'"))
+    source: Mapped[str | None] = mapped_column(NVARCHAR(20), nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", name="fk_project_artifact_sections_approved_by"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+    updated_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+    section: Mapped[ArtifactSection] = relationship()
+
+
+class ArtifactSectionProposal(Base):
+    """What the agent wrote for a section (PENDING), or why it could not (NEEDS_CLARIFICATION)."""
+
+    __tablename__ = "artifact_section_proposals"
+    __table_args__ = (
+        Index("ix_artifact_section_proposals_section_status", "project_artifact_section_id", "status"),
+        CheckConstraint(
+            "status IN ('PENDING', 'APPROVED', 'REJECTED', 'NEEDS_CLARIFICATION', 'SUPERSEDED')",
+            name="ck_artifact_section_proposals_status",
+        ),
+        CheckConstraint(
+            "clarification_questions IS NULL OR ISJSON(clarification_questions) = 1",
+            name="ck_artifact_section_proposals_questions_json",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_artifact_section_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("project_artifact_sections.id", ondelete="CASCADE", name="fk_artifact_section_proposals_section_id"),
+        nullable=False,
+    )
+    proposed_content: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    status: Mapped[str] = mapped_column(NVARCHAR(30), nullable=False, server_default=text("'PENDING'"))
+    missing_reason: Mapped[str | None] = mapped_column(NVARCHAR(1000), nullable=True)
+    clarification_questions: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    generated_by_agent_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("agents.id", name="fk_artifact_section_proposals_agent_id"), nullable=False
+    )
+    # NO ACTION: the project cascade already reaches agent_runs.
+    agent_run_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("agent_runs.id", name="fk_artifact_section_proposals_run_id"), nullable=True
+    )
+    reviewed_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", name="fk_artifact_section_proposals_reviewed_by"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+
+class ArtifactSectionClarification(Base):
+    """The user's answer to one agent question. Re-sent on every later regeneration of the section."""
+
+    __tablename__ = "artifact_section_clarifications"
+    __table_args__ = (Index("ix_artifact_section_clarifications_section_id", "project_artifact_section_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_artifact_section_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "project_artifact_sections.id", ondelete="CASCADE", name="fk_artifact_section_clarifications_section_id"
+        ),
+        nullable=False,
+    )
+    # NO ACTION: the section cascade already reaches both tables.
+    proposal_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("artifact_section_proposals.id", name="fk_artifact_section_clarifications_proposal_id"),
+        nullable=True,
+    )
+    question: Mapped[str] = mapped_column(NVARCHAR(1000), nullable=False)
+    answer: Mapped[str] = mapped_column(NVARCHAR(length="max"), nullable=False)
+    answered_by: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", name="fk_artifact_section_clarifications_answered_by"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+
+class ProjectArtifactVersion(Base):
+    """A frozen JSON snapshot of the whole artifact each time it is approved (v1, v2 ...)."""
+
+    __tablename__ = "project_artifact_versions"
+    __table_args__ = (
+        UniqueConstraint("project_artifact_id", "version_number", name="uq_project_artifact_versions"),
+        CheckConstraint("version_number >= 1", name="ck_project_artifact_versions_version_number"),
+        CheckConstraint("ISJSON(snapshot) = 1", name="ck_project_artifact_versions_snapshot_json"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_artifact_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("project_artifacts.id", ondelete="CASCADE", name="fk_project_artifact_versions_artifact_id"),
+        nullable=False,
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[str] = mapped_column(NVARCHAR(length="max"), nullable=False)
+    approved_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", name="fk_project_artifact_versions_approved_by"), nullable=True
+    )
+    approved_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)

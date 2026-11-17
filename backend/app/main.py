@@ -20,6 +20,7 @@ from app.api.routes.context import router as context_router
 from app.api.routes.context_chunks import router as context_chunks_router
 from app.api.routes.notes import router as notes_router
 from app.api.routes.mappings import router as mappings_router
+from app.api.routes.brd import router as brd_router
 
 
 logging.basicConfig(
@@ -72,6 +73,7 @@ app.include_router(context_router)
 app.include_router(context_chunks_router)
 app.include_router(notes_router)
 app.include_router(mappings_router)
+app.include_router(brd_router)
 
 
 @app.get("/")
