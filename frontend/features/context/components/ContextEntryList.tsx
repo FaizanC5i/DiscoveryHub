@@ -1,44 +1,30 @@
-import type { NotesStatus } from "../hooks/useProjectNotes";
-import type { ContextEntry } from "../utils/contextEntries";
-import { NoteItem } from "./NoteItem";
+import type { Source } from "../types/source";
+import { isNote } from "../utils/sourceFilters";
+import { NoteRow } from "./NoteRow";
 import { SourceItem } from "./SourceItem";
 
 interface ContextEntryListProps {
   projectId: number;
-  entries: ContextEntry[];
-  notesStatus: NotesStatus;
+  sources: Source[];
   emptyMessage: string;
-  onRemoveNote: (noteId: string) => Promise<void>;
+  onOpenNote: (sourceId: number) => void;
 }
 
-export function ContextEntryList({
-  projectId,
-  entries,
-  notesStatus,
-  emptyMessage,
-  onRemoveNote,
-}: ContextEntryListProps) {
-  return (
-    <div className="flex flex-col gap-3">
-      {notesStatus === "error" ? (
-        <p role="alert" className="text-body-small text-error">
-          Notes could not be loaded. Refresh the page to try again.
-        </p>
-      ) : null}
+/** Files and manual notes in one list. Each kind keeps its own row. */
+export function ContextEntryList({ projectId, sources, emptyMessage, onOpenNote }: ContextEntryListProps) {
+  if (sources.length === 0) {
+    return <p className="text-body-small text-fg-muted">{emptyMessage}</p>;
+  }
 
-      {entries.length === 0 ? (
-        <p className="text-body-small text-fg-muted">{emptyMessage}</p>
-      ) : (
-        <ul className="flex flex-col divide-y divide-border-subtle">
-          {entries.map((entry) =>
-            entry.kind === "source" ? (
-              <SourceItem key={entry.id} projectId={projectId} source={entry.source} />
-            ) : (
-              <NoteItem key={entry.id} note={entry.note} onRemove={onRemoveNote} />
-            ),
-          )}
-        </ul>
+  return (
+    <ul className="flex flex-col divide-y divide-border-subtle">
+      {sources.map((source) =>
+        isNote(source) ? (
+          <NoteRow key={source.id} projectId={projectId} source={source} onOpen={onOpenNote} />
+        ) : (
+          <SourceItem key={source.id} projectId={projectId} source={source} />
+        ),
       )}
-    </div>
+    </ul>
   );
 }

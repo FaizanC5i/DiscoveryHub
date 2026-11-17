@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/Button";
 import type { Source } from "../types/source";
 import { deleteSource, reprocessSource } from "../services/contextService";
 import { formatFileSize } from "../utils/fileValidation";
+import { isWorking } from "../utils/sourceFilters";
+import { ShimmerBar } from "./ProcessingIndicator";
 import { SourceStatusBadge } from "./SourceStatusBadge";
 
 interface SourceItemProps {
@@ -39,13 +41,15 @@ export function SourceItem({ projectId, source }: SourceItemProps) {
     <li className="flex flex-col gap-2 py-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <p className="truncate text-body-medium font-semibold text-fg" title={source.original_filename}>
+          <p className="truncate text-body-medium font-semibold text-fg" title={source.original_filename ?? undefined}>
             {source.title}
           </p>
           <p className="text-caption text-fg-muted">{formatFileSize(source.file_size_bytes)}</p>
         </div>
-        <SourceStatusBadge status={source.processing_status} />
+        <SourceStatusBadge status={source.processing_status} mappingPending={source.mapping_pending} />
       </div>
+
+      {isWorking(source) ? <ShimmerBar /> : null}
 
       {source.failure_reason ? <p className="text-caption text-error">{source.failure_reason}</p> : null}
       {error ? (

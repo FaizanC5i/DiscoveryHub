@@ -6,7 +6,7 @@ each table stores, its columns, its keys, and one sample row. The samples use ma
 of writing.
 
 The schema is created only by Alembic migrations in `backend/alembic/versions/`. Current
-revision: `010_checkpoint_answer_tables`.
+revision: `011_manual_note_sources`.
 
 ---
 
@@ -14,27 +14,29 @@ revision: `010_checkpoint_answer_tables`.
 
 | Table | Rows | Purpose | Written by |
 |---|---|---|---|
-| `users` | 34 | Accounts that can sign in | Sign-up, password reset |
-| `refresh_tokens` | 119 | Long-lived sign-in sessions | Login, refresh, logout |
+| `users` | 36 | Accounts that can sign in | Sign-up, password reset |
+| `refresh_tokens` | 130 | Long-lived sign-in sessions | Login, refresh, logout |
 | `password_reset_tokens` | 4 | One-time password reset links | Forgot-password flow |
-| `projects` | 23 | Discovery projects, one owner each | Project create, edit, delete |
-| `context_sources` | 14 | Each uploaded document | Upload, retry, delete |
-| `context_content` | 14 | The text extracted from a document | Upload, retry |
-| `context_chunks` | 204 | Overlapping pieces of the text | Chunking, mapping job |
+| `projects` | 25 | Discovery projects, one owner each | Project create, edit, delete |
+| `context_sources` | 17 | Each uploaded document (`FILE_UPLOAD`) and each manual note (`MANUAL_NOTE`) | Upload, note create and edit, retry, delete |
+| `context_content` | 17 | The text of a document or note | Upload, note create and edit, retry |
+| `context_chunks` | 210 | Overlapping pieces of the text | Chunking, mapping job |
 | `discovery_pillars` | 3 | The three discovery areas (User, Data, Tech) | Migration 007 (fixed data) |
 | `discovery_checkpoints` | 15 | The questions each pillar must answer | Migration 007 (fixed data) |
 | `agents` | 4 | Who produced a mapping or run: the Helper Agent and the three pillar agents | Migrations 008 and 009 (seeded) |
-| `agent_runs` | 31 | One row per agent execution | Mapping job |
+| `agent_runs` | 33 | One row per agent execution | Mapping job |
 | `agent_run_checkpoints` | 0 | Per-checkpoint result inside one run. Helper runs do not write here. | Nothing yet |
 | `agent_run_chunks` | 0 | Chunks sent into one run. Helper runs do not write here. | Nothing yet |
-| `context_checkpoint_mappings` | 407 | A chunk tagged with a checkpoint | Mapping job |
-| `mapping_evidence` | 407 | The quote that justifies each mapping | Mapping job |
+| `context_checkpoint_mappings` | 427 | A chunk tagged with a checkpoint (327 active, 100 deactivated history) | Mapping job, note edit and delete |
+| `mapping_evidence` | 427 | The quote that justifies each mapping | Mapping job |
 | `project_checkpoint_answers` | 0 | Current answer and completion state for each checkpoint in a project | Nothing yet (schema only) |
 | `checkpoint_answer_proposals` | 0 | AI-proposed answers, several per checkpoint answer | Nothing yet (schema only) |
 | `proposal_evidence` | 0 | Chunks and mappings that support a proposal | Nothing yet (schema only) |
 | `checkpoint_answer_versions` | 0 | Saved snapshots of each checkpoint answer | Nothing yet (schema only) |
 | `checkpoint_answer_evidence` | 0 | Chunks that support one saved answer version | Nothing yet (schema only) |
 | `alembic_version` | 1 | The migration revision the database is at | Alembic |
+
+Row counts were taken after migration 011 and the manual note end-to-end test. Their exact values change with use.
 
 ---
 
@@ -173,31 +175,42 @@ Indexes: `(owner_id, created_at)`.
 
 ## context_sources
 
-One row per uploaded document. The file itself is in Azure Blob Storage; this row describes it.
+One row per project document. A row is either an uploaded file or a manual note, told apart by
+`source_type`. An uploaded file's original is in Azure Blob Storage and this row describes it.
+A manual note has no file: its text is in `context_content` and nothing is written to Blob Storage.
 
 | Column | Type | Nullable | Default | Meaning |
 |---|---|---|---|---|
 | `id` | BIGINT identity | no | | Primary key |
 | `project_id` | BIGINT | no | | FK to `projects.id`, cascade delete |
-| `created_by` | BIGINT | no | | FK to `users.id` (who uploaded it). No cascade. |
-| `source_type` | NVARCHAR(30) | no | 'upload' | How it arrived |
-| `title` | NVARCHAR(255) | no | | File name without its extension |
-| `original_filename` | NVARCHAR(255) | no | | The name as uploaded |
-| `blob_path` | NVARCHAR(500) | no | | Where the file is in Blob Storage, e.g. `projects/12/sources/<uuid>.docx` |
-| `mime_type` | NVARCHAR(100) | no | | e.g. `application/pdf` |
-| `file_size_bytes` | BIGINT | no | | Size of the uploaded file |
+| `created_by` | BIGINT | no | | FK to `users.id` (who uploaded or wrote it). No cascade. |
+| `source_type` | NVARCHAR(30) | no | 'FILE_UPLOAD' | `FILE_UPLOAD` (uploaded file) or `MANUAL_NOTE` (typed note). Checked. |
+| `title` | NVARCHAR(255) | no | | File name without its extension, or the note's title |
+| `original_filename` | NVARCHAR(255) | yes | | The name as uploaded. NULL for notes. |
+| `blob_path` | NVARCHAR(500) | yes | | Where the file is in Blob Storage, e.g. `projects/12/sources/<uuid>.docx`. NULL for notes. |
+| `mime_type` | NVARCHAR(100) | no | | e.g. `application/pdf`, or `text/plain` for notes |
+| `file_size_bytes` | BIGINT | no | | Size of the uploaded file, or the UTF-8 byte length of a note's text |
 | `processing_status` | NVARCHAR(20) | no | | `processing`, `ready` or `failed` |
 | `failure_reason` | NVARCHAR(500) | yes | | Why extraction or chunking failed, shown to the user |
-| `created_at` | DATETIME2 | no | UTC now | When uploaded |
-| `deleted_at` | DATETIME2 | yes | | Set when the user removes the document (soft delete). Hidden from lists. |
+| `created_at` | DATETIME2 | no | UTC now | When uploaded or created |
+| `updated_at` | DATETIME2 | yes | | When a note's title or text was last edited. NULL if never edited. |
+| `deleted_at` | DATETIME2 | yes | | Set when the user removes the document or note (soft delete). Hidden from lists. |
 
 Indexes: `(project_id, created_at)`.
 
-**Sample row**
+Lifecycle of a note:
+- **Create:** one `MANUAL_NOTE` row, one `context_content` row (`extraction_method = 'manual'`), then chunks and mapping as for a file.
+- **Edit title only:** the same row is updated, and `updated_at` is set.
+- **Edit text:** the old row is soft-deleted (`deleted_at` set) and its mappings are deactivated. A new `MANUAL_NOTE` row takes its place, with its own content and chunks. Its `updated_at` is the edit time, and the note's id changes with its text.
+- **Delete:** soft delete, and the note's mappings are deactivated.
 
-| id | project_id | created_by | title | original_filename | blob_path | mime_type | file_size_bytes | processing_status | failure_reason | deleted_at |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 30 | 12 | 7 | notes | notes.txt | projects/12/sources/3f9a...c1.txt | text/plain | 148 | ready | NULL | NULL |
+**Sample rows**
+
+| id | project_id | created_by | source_type | title | original_filename | blob_path | mime_type | file_size_bytes | processing_status | failure_reason | updated_at | deleted_at |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 30 | 12 | 7 | FILE_UPLOAD | notes | notes.txt | projects/12/sources/3f9a...c1.txt | text/plain | 148 | ready | NULL | NULL | NULL |
+| 31 | 12 | 7 | MANUAL_NOTE | Kick-off call notes | NULL | NULL | text/plain | 1201 | ready | NULL | NULL | NULL |
+| 32 | 12 | 7 | MANUAL_NOTE | Kick-off call notes | NULL | NULL | text/plain | 1395 | ready | NULL | 2026-11-17 09:11 | NULL |
 
 ---
 
@@ -210,14 +223,17 @@ The text extracted from one document. There is at most one per source.
 | `id` | BIGINT identity | no | | Primary key |
 | `context_source_id` | BIGINT | no | | FK to `context_sources.id`, cascade delete. Unique. |
 | `content_text` | NVARCHAR(MAX) | no | | The full extracted text. Chunk offsets refer to this exact string. |
-| `extraction_method` | NVARCHAR(50) | no | | Which extractor produced it, e.g. `utf-8`, `python-docx`, `pdfplumber` |
-| `created_at` | DATETIME2 | no | UTC now | When extracted |
+| `extraction_method` | NVARCHAR(50) | no | | Which extractor produced it, e.g. `utf-8`, `python-docx`, `pdfplumber`. `manual` for a typed note. |
+| `created_at` | DATETIME2 | no | UTC now | When extracted, or when the note was saved |
 
-**Sample row**
+For a note, `content_text` is exactly what the user typed (trimmed at both ends), with its line breaks kept.
+
+**Sample rows**
 
 | id | context_source_id | content_text | extraction_method | created_at |
 |---|---|---|---|---|
 | 25 | 30 | `The ERP runs on a fixed on-premise server and cannot be upgraded before 2027. Staff log in to the intranet with a single shared account per warehouse.` | utf-8 | 2026-11-02 09:21 |
+| 26 | 31 | `Patients book appointments either by phone or through the online portal. ...` | manual | 2026-11-17 09:09 |
 
 ---
 
@@ -609,7 +625,7 @@ Used by Alembic to know which migration the database has reached. Do not edit it
 
 | Column | Type | Meaning |
 |---|---|---|
-| `version_num` | VARCHAR(32) | Current revision: `010_checkpoint_answer_tables` |
+| `version_num` | VARCHAR(32) | Current revision: `011_manual_note_sources` |
 
 ---
 
@@ -619,8 +635,13 @@ Used by Alembic to know which migration the database has reached. Do not edit it
   Some older tables (`users`, `refresh_tokens`, `password_reset_tokens`) use `DATETIME`.
 - **Soft deletes:** documents are soft-deleted (`context_sources.deleted_at`). Their text and chunks
   remain in the database. Projects are hard-deleted.
-- **Immutable chunks:** chunk rows are never updated or deleted. A changed document gets new content and new chunks.
+- **Immutable chunks:** chunk rows are never updated or deleted. A changed document or note gets new content and new chunks.
 - **Mapping history:** mappings are deactivated, not deleted, so the history of what was tagged stays available.
+  When a note's text changes or the note is removed, its active mappings are deactivated, so retrieval
+  never uses a mapping whose chunk text is no longer current. Deleting an uploaded file does not deactivate
+  its mappings (unchanged behaviour).
+- **Manual notes (migration 011):** a note is a `context_sources` row with `source_type = 'MANUAL_NOTE'`.
+  Migration 011 also changed the existing file rows from `upload` to `FILE_UPLOAD`.
 - **Agent history:** the 7 `user_discovery` runs and their reply text remain in `agent_runs` after the feature was removed.
 - **Checkpoint answer tables are schema only.** They were created in migration 010 so future features
   have a place to store answers, proposals, versions and evidence. No code writes to them yet, so they

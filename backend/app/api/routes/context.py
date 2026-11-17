@@ -7,7 +7,7 @@ asking, reads the upload, and hands it to the service. It contains no rules.
 
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -20,15 +20,24 @@ from app.services.storage.blob_storage import BlobStorage, get_blob_storage
 
 router = APIRouter(prefix="/api/projects/{project_id}/sources", tags=["context"])
 
+DbSession = Annotated[Session, Depends(get_db)]
+Storage = Annotated[BlobStorage, Depends(get_blob_storage)]
 
-def _queue_mapping(background: BackgroundTasks, db: Session, source) -> None:
+
+def queue_source_mapping(background: BackgroundTasks, db: Session, source) -> None:
     """Send the source's chunks for mapping once they have been stored."""
     if source.content is not None:
         chunk_ids = context_chunk_service.chunk_ids_for_content(db, source.content.id)
         chunk_mapping_service.enqueue_chunk_mapping(background, chunk_ids)
 
-DbSession = Annotated[Session, Depends(get_db)]
-Storage = Annotated[BlobStorage, Depends(get_blob_storage)]
+
+def read_sources(db: Session, sources) -> list[SourceRead]:
+    """Response rows for sources, each with whether mapping is still pending."""
+    pending = context_service.sources_still_mapping(db, [source.id for source in sources])
+    return [
+        SourceRead.model_validate(source).model_copy(update={"mapping_pending": source.id in pending})
+        for source in sources
+    ]
 
 
 @router.post("", status_code=201, response_model=SourceRead)
@@ -56,13 +65,18 @@ def upload_source(
         raise api_error(422, "EMPTY_FILE", "This file is empty.")
 
     source = context_service.upload_source(db, storage, user, project_id, file.filename or "", data)
-    _queue_mapping(background, db, source)
-    return source
+    queue_source_mapping(background, db, source)
+    return read_sources(db, [source])[0]
 
 
 @router.get("", response_model=list[SourceRead])
-def list_sources(project_id: int, user: CurrentUser, db: DbSession) -> list[SourceRead]:
-    return context_service.list_sources(db, user.id, project_id)
+def list_sources(
+    project_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    q: Annotated[str | None, Query(max_length=200)] = None,
+) -> list[SourceRead]:
+    return read_sources(db, context_service.list_sources(db, user.id, project_id, q))
 
 
 @router.post("/{source_id}/reprocess", response_model=SourceRead)
@@ -75,8 +89,8 @@ def reprocess_source(
     storage: Storage,
 ) -> SourceRead:
     source = context_service.reprocess_source(db, storage, user.id, project_id, source_id)
-    _queue_mapping(background, db, source)
-    return source
+    queue_source_mapping(background, db, source)
+    return read_sources(db, [source])[0]
 
 
 @router.delete("/{source_id}", status_code=204)

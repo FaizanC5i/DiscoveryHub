@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LibraryWorkspace } from "@/features/discovery/components/LibraryWorkspace";
+import { ContextLibraryWorkspace } from "@/features/context/components/ContextLibraryWorkspace";
+import type { Source } from "@/features/context/types/source";
 import { PageError, PageLoading } from "@/features/discovery/components/PageStatus";
 import { useDiscoveryOverview } from "@/features/discovery/hooks/useDiscoveryOverview";
-import { getDiscoveryStats } from "@/features/discovery/utils/discovery-stats";
 import { getArtifactStudioData } from "../services/artifact-studio.service";
 import type { ArtifactCode, ArtifactStudioData } from "../types/artifact-studio.types";
 import { ArtifactTypePicker } from "./ArtifactTypePicker";
@@ -14,12 +14,13 @@ import { EvidenceReadiness } from "./EvidenceReadiness";
 
 interface ArtifactStudioViewProps {
   projectId: string;
+  sources: Source[];
   /** From the URL, e.g. ?artifact=BRD when coming from "Generate BRD". */
   initialArtifact?: string;
 }
 
 /** The Artifact Studio tab. The project header and tab bar come from the project layout. */
-export function ArtifactStudioView({ projectId, initialArtifact }: ArtifactStudioViewProps) {
+export function ArtifactStudioView({ projectId, sources, initialArtifact }: ArtifactStudioViewProps) {
   const discovery = useDiscoveryOverview(projectId);
   const [studio, setStudio] = useState<ArtifactStudioData | null>(null);
   const [studioError, setStudioError] = useState<string | null>(null);
@@ -40,7 +41,7 @@ export function ArtifactStudioView({ projectId, initialArtifact }: ArtifactStudi
     };
   }, [projectId, studioReloadKey]);
 
-  const { overview, retry: retryDiscovery, addSourceFiles } = discovery;
+  const { overview, retry: retryDiscovery } = discovery;
   const error = discovery.error ?? studioError;
 
   function retry() {
@@ -60,12 +61,7 @@ export function ArtifactStudioView({ projectId, initialArtifact }: ArtifactStudi
     studio.artifactTypes[0]!;
 
   return (
-    <LibraryWorkspace
-      pillars={overview.pillars}
-      stats={getDiscoveryStats(overview.pillars)}
-      sources={overview.sources}
-      onAddFiles={addSourceFiles}
-    >
+    <ContextLibraryWorkspace projectId={Number(projectId)} sources={sources}>
       <AvailableArtifacts projectId={projectId} artifacts={studio.availableArtifacts} types={studio.artifactTypes} />
 
       <div>
@@ -97,6 +93,6 @@ export function ArtifactStudioView({ projectId, initialArtifact }: ArtifactStudi
         Studio reads the same project library visible at right. Generating snapshots the selected sources and the
         current coverage. Opening a draft does not change discovery counts.
       </p>
-    </LibraryWorkspace>
+    </ContextLibraryWorkspace>
   );
 }

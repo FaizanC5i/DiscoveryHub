@@ -25,7 +25,6 @@ export const ChevronLeftIcon = () => <Icon><path d="M15 18l-6-6 6-6" /></Icon>;
 export const CloseIcon = () => <Icon><path d="M18 6L6 18M6 6l12 12" /></Icon>;
 export const DownloadIcon = () => <Icon><path d="M12 4v12M6 10l6 6 6-6M5 20h14" /></Icon>;
 export const InfoIcon = () => <Icon><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></Icon>;
-export const PanelIcon = () => <Icon><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></Icon>;
 export const PlusIcon = () => <Icon><path d="M12 5v14M5 12h14" /></Icon>;
 export const SearchIcon = () => <Icon><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></Icon>;
 export const SettingsIcon = () => (

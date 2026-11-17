@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import { Badge } from "@/components/ui/Badge";
-import type { SourceStatus, UploadState } from "../types/source";
+import type { SourceStatus, SourceType, UploadState } from "../types/source";
+import { ProcessingBadge } from "./ProcessingIndicator";
 
 type BadgeTone = ComponentProps<typeof Badge>["tone"];
 
@@ -10,6 +11,11 @@ const SOURCE_STATUS: Record<SourceStatus, { label: string; tone: BadgeTone }> = 
   failed: { label: "Failed", tone: "error" },
 };
 
+const NOTE_STATUS: Record<SourceStatus, { label: string; tone: BadgeTone }> = {
+  ...SOURCE_STATUS,
+  ready: { label: "Processed", tone: "success" },
+};
+
 const UPLOAD_STATE: Record<UploadState, { label: string; tone: BadgeTone }> = {
   queued: { label: "Queued", tone: "neutral" },
   uploading: { label: "Processing", tone: "brand" },
@@ -17,8 +23,16 @@ const UPLOAD_STATE: Record<UploadState, { label: string; tone: BadgeTone }> = {
   failed: { label: "Failed", tone: "error" },
 };
 
-export function SourceStatusBadge({ status }: { status: SourceStatus }) {
-  const { label, tone } = SOURCE_STATUS[status];
+interface SourceStatusBadgeProps {
+  status: SourceStatus;
+  sourceType?: SourceType;
+  /** The helper agent is still mapping this source's chunks. Shown as processing until it finishes. */
+  mappingPending?: boolean;
+}
+
+export function SourceStatusBadge({ status, sourceType = "FILE_UPLOAD", mappingPending = false }: SourceStatusBadgeProps) {
+  if (status === "processing" || mappingPending) return <ProcessingBadge />;
+  const { label, tone } = (sourceType === "MANUAL_NOTE" ? NOTE_STATUS : SOURCE_STATUS)[status];
   return <Badge tone={tone}>{label}</Badge>;
 }
 

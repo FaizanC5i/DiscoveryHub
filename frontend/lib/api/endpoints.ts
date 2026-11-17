@@ -23,9 +23,9 @@ export const API_PATHS = {
     reprocess: (projectId: number | string, sourceId: number | string) =>
       `/api/projects/${projectId}/sources/${sourceId}/reprocess`,
   },
-    notes: {
+  notes: {
     list: (projectId: number | string) => `/api/projects/${projectId}/notes`,
-    detail: (projectId: number | string, noteId: string) =>
+    detail: (projectId: number | string, noteId: number | string) =>
       `/api/projects/${projectId}/notes/${noteId}`,
   },
 } as const;

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
-import { useSourceUploads } from "@/features/context/hooks/useSourceUploads";
+import { allSaved, useSourceUploads } from "@/features/context/hooks/useSourceUploads";
 import type { Project, ProjectInput } from "@/types/project";
 import { createProject, updateProject } from "../services/projectService";
 import type { ProjectFormValues } from "../types/projectForm";
@@ -57,15 +57,15 @@ export function ProjectFormModal({ open, onClose, project, onSaved }: ProjectFor
     const newProject = await createProject(input);
     setCreated(newProject);
 
-    const allReady = await uploadFiles(newProject.id, files);
-    if (allReady) onSaved(newProject);
+    const saved = await uploadFiles(newProject.id, files);
+    if (allSaved(saved, files)) onSaved(newProject);
   }
 
   async function handleRetry() {
     if (!created) return;
     const failed = files.filter((file) => file.state === "failed");
-    const allReady = await uploadFiles(created.id, failed);
-    if (allReady) onSaved(created);
+    const saved = await uploadFiles(created.id, failed);
+    if (allSaved(saved, failed)) onSaved(created);
   }
 
   const title = isEditing ? "Edit project" : created ? "Project documents" : "Create a new project";

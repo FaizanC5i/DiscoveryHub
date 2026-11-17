@@ -185,6 +185,10 @@ class ContextSource(Base):
             "processing_status IN ('processing', 'ready', 'failed')",
             name="ck_context_sources_status",
         ),
+        CheckConstraint(
+            "source_type IN ('FILE_UPLOAD', 'MANUAL_NOTE')",
+            name="ck_context_sources_source_type",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -194,11 +198,12 @@ class ContextSource(Base):
     # No ondelete here on purpose: SQL Server rejects a second cascade path from users.
     created_by: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     source_type: Mapped[str] = mapped_column(
-        NVARCHAR(30), nullable=False, server_default=text("'upload'")
+        NVARCHAR(30), nullable=False, server_default=text("'FILE_UPLOAD'")
     )
     title: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
-    original_filename: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
-    blob_path: Mapped[str] = mapped_column(NVARCHAR(500), nullable=False)
+    # Manual notes have no file, so these three are empty for them.
+    original_filename: Mapped[str | None] = mapped_column(NVARCHAR(255), nullable=True)
+    blob_path: Mapped[str | None] = mapped_column(NVARCHAR(500), nullable=True)
     mime_type: Mapped[str] = mapped_column(NVARCHAR(100), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     processing_status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
@@ -206,6 +211,7 @@ class ContextSource(Base):
     created_at: Mapped[datetime] = mapped_column(
         DATETIME2, nullable=False, server_default=UTC_NOW
     )
+    updated_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
     # Soft delete: hidden from lists immediately, blob removed best-effort.
     deleted_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
 

@@ -12,7 +12,7 @@ import {
   placeholderUser,
   TARGET_PERCENT,
 } from "../data/placeholder-data";
-import type { DiscoveryOverview, Source } from "../types/discovery.types";
+import type { DiscoveryOverview } from "../types/discovery.types";
 
 /**
  * Project, user, pillars with gaps, and context sources.
@@ -29,17 +29,3 @@ export async function getDiscoveryOverview(projectId: string): Promise<Discovery
   };
 }
 
-/**
- * Upload files to the context library. Returns the new sources.
- * Backend: POST /api/projects/{projectId}/sources (multipart/form-data, field "files")
- */
-export async function uploadSourceFiles(projectId: string, files: File[]): Promise<Source[]> {
-  // PLACEHOLDER: replace with the API call.
-  return files.map((file, i) => ({
-    id: `new-${Date.now()}-${i}`,
-    title: file.name,
-    status: "Processing",
-    pillars: [],
-    createdBy: placeholderUser.name,
-  }));
-}

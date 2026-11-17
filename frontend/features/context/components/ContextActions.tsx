@@ -6,16 +6,19 @@ import { PlusIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { useSourceUploads } from "../hooks/useSourceUploads";
+import type { Source } from "../types/source";
 import { ACCEPT_ATTRIBUTE } from "../utils/fileValidation";
 import { PendingFileList } from "./PendingFileList";
 
 interface ContextActionsProps {
   projectId: number;
   onAddNote: () => void;
+  /** Called with the sources the server just saved, so the library shows them while they process. */
+  onSaved: (sources: Source[]) => void;
 }
 
 /** Add Files, Add Note, drag-and-drop, and the status of files being uploaded. */
-export function ContextActions({ projectId, onAddNote }: ContextActionsProps) {
+export function ContextActions({ projectId, onAddNote, onSaved }: ContextActionsProps) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -25,7 +28,7 @@ export function ContextActions({ projectId, onAddNote }: ContextActionsProps) {
   async function handleFiles(selected: File[]) {
     const added = addFiles(selected);
     if (added.length === 0) return;
-    await uploadFiles(projectId, added);
+    onSaved(await uploadFiles(projectId, added));
     dropSavedFiles();
     router.refresh();
   }
@@ -33,7 +36,7 @@ export function ContextActions({ projectId, onAddNote }: ContextActionsProps) {
   async function handleRetry(id: string) {
     const item = files.find((file) => file.id === id);
     if (!item) return;
-    await uploadFiles(projectId, [item]);
+    onSaved(await uploadFiles(projectId, [item]));
     dropSavedFiles();
     router.refresh();
   }

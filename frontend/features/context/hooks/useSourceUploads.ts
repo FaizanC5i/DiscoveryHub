@@ -2,8 +2,13 @@
 
 import { useCallback, useState } from "react";
 import { reprocessSource, uploadSource } from "../services/contextService";
-import type { PendingFile, UploadState } from "../types/source";
+import type { PendingFile, Source, UploadState } from "../types/source";
 import { validateUploadFile } from "../utils/fileValidation";
+
+/** True when every file was saved and is ready, so nothing failed. */
+export function allSaved(saved: Source[], items: PendingFile[]): boolean {
+  return saved.length === items.length && saved.every((source) => source.processing_status === "ready");
+}
 
 /**
  * Upload state for a list of files: picking, validating, sending one at a time,
@@ -53,7 +58,7 @@ export function useSourceUploads() {
   }, []);
 
   const uploadOne = useCallback(
-    async (projectId: number, item: PendingFile): Promise<boolean> => {
+    async (projectId: number, item: PendingFile): Promise<Source | null> => {
       updateFile(item.id, { state: "uploading", error: undefined });
       try {
         const source =
@@ -67,32 +72,35 @@ export function useSourceUploads() {
           state,
           error: source.failure_reason ?? undefined,
         });
-        return state === "done";
+        return source;
       } catch (error) {
         updateFile(item.id, {
           state: "failed",
           error: error instanceof Error ? error.message : "Upload failed. Please try again.",
         });
-        return false;
+        return null;
       }
     },
     [updateFile],
   );
 
-  /** Sends the given files one after another. Resolves true only when every one is ready. */
+  /**
+   * Sends the given files one after another. Returns the sources the server saved, so the
+   * library can show them straight away, still processing.
+   */
   const uploadFiles = useCallback(
-    async (projectId: number, items: PendingFile[]): Promise<boolean> => {
+    async (projectId: number, items: PendingFile[]): Promise<Source[]> => {
       setIsUploading(true);
-      let allReady = true;
+      const saved: Source[] = [];
       try {
         for (const item of items) {
-          const ok = await uploadOne(projectId, item);
-          allReady = allReady && ok;
+          const source = await uploadOne(projectId, item);
+          if (source) saved.push(source);
         }
       } finally {
         setIsUploading(false);
       }
-      return allReady;
+      return saved;
     },
     [uploadOne],
   );

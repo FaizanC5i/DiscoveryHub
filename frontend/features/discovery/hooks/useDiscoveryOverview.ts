@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getDiscoveryOverview, uploadSourceFiles } from "../services/discovery.service";
+import { getDiscoveryOverview } from "../services/discovery.service";
 import type { DiscoveryOverview } from "../types/discovery.types";
 
 /** Loads a project's discovery overview and keeps its source list current after uploads. */
@@ -30,10 +30,5 @@ export function useDiscoveryOverview(projectId: string) {
     setReloadKey((k) => k + 1);
   }
 
-  async function addSourceFiles(files: File[]) {
-    const added = await uploadSourceFiles(projectId, files);
-    setOverview((current) => (current ? { ...current, sources: [...current.sources, ...added] } : current));
-  }
-
-  return { overview, error, retry, addSourceFiles };
+  return { overview, error, retry };
 }

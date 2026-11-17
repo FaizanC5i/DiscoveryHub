@@ -1,15 +1,21 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { CloseIcon } from "@/components/icons";
 import { YetToBeDone } from "@/components/ui/YetToBeDone";
-import { useProjectNotes } from "../hooks/useProjectNotes";
+import { useLiveSources } from "../hooks/useLiveSources";
+import { useSourceSearch } from "../hooks/useSourceSearch";
+import { createNote } from "../services/contextService";
+import type { NoteInput } from "../types/note";
 import type { Source } from "../types/source";
-import { buildContextEntries, filterContextEntries } from "../utils/contextEntries";
+import { filterSourcesByType, isWorking, type SourceTypeFilter } from "../utils/sourceFilters";
 import { AddNoteDialog } from "./AddNoteDialog";
 import { ContextActions } from "./ContextActions";
 import { ContextEntryList } from "./ContextEntryList";
 import { ContextFilters } from "./ContextFilters";
+import { NoteDetailDialog } from "./NoteDetailDialog";
+import { ProcessingPanel } from "./ProcessingIndicator";
 
 interface ContextLibraryProps {
   projectId: number;
@@ -18,21 +24,31 @@ interface ContextLibraryProps {
 }
 
 /**
- * The right-hand panel: Add Files, Add Note, filters, and every source and note.
- * Sources come from the server. Notes are loaded and saved through noteService.
+ * The right-hand panel: Add Files, Add Note, filters, and every file and note.
+ * Sources come from the server. Notes are created, opened, and edited through the same API.
  */
-export function ContextLibrary({ projectId, sources, onHide }: ContextLibraryProps) {
-  const { notes, status, addNote, removeNote } = useProjectNotes(projectId);
+export function ContextLibrary({ projectId, sources: serverSources, onHide }: ContextLibraryProps) {
+  const { sources, addSaved } = useLiveSources(projectId, serverSources);
+  const router = useRouter();
   const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
+  const [selectedNoteId, setSelectedNoteId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<SourceTypeFilter>("all");
 
-  const entries = useMemo(() => buildContextEntries(sources, notes), [sources, notes]);
-  const visibleEntries = useMemo(() => filterContextEntries(entries, query), [entries, query]);
+  const workingCount = useMemo(() => sources.filter(isWorking).length, [sources]);
+
+  const { visible: searched, error: searchError } = useSourceSearch(projectId, query, sources);
+  const visibleSources = useMemo(() => filterSourcesByType(searched, typeFilter), [searched, typeFilter]);
 
   const emptyMessage =
-    entries.length === 0
+    sources.length === 0
       ? "No documents or notes yet. Add files or a note to start."
-      : "Nothing matches your search.";
+      : "Nothing matches your search or filter.";
+
+  async function handleSaveNote(input: NoteInput) {
+    addSaved([await createNote(projectId, input)]);
+    router.refresh();
+  }
 
   return (
     <aside
@@ -56,29 +72,48 @@ export function ContextLibrary({ projectId, sources, onHide }: ContextLibraryPro
         <YetToBeDone />
       </div>
 
-      <ContextActions projectId={projectId} onAddNote={() => setIsNoteDialogOpen(true)} />
+      <ContextActions projectId={projectId} onAddNote={() => setIsNoteDialogOpen(true)} onSaved={addSaved} />
 
-      <ContextFilters query={query} onQueryChange={setQuery} />
+      <ContextFilters
+        query={query}
+        onQueryChange={setQuery}
+        typeFilter={typeFilter}
+        onTypeFilterChange={setTypeFilter}
+      />
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h3 className="text-body-medium font-semibold text-fg">Project sources</h3>
-          <span className="text-caption text-fg-muted">{entries.length} total</span>
+          <span className="text-caption text-fg-muted">{sources.length} total</span>
         </div>
+        {workingCount > 0 ? <ProcessingPanel count={workingCount} /> : null}
+        {searchError ? (
+          <p role="alert" className="text-caption text-error">
+            {searchError}
+          </p>
+        ) : null}
         <ContextEntryList
           projectId={projectId}
-          entries={visibleEntries}
-          notesStatus={status}
+          sources={visibleSources}
           emptyMessage={emptyMessage}
-          onRemoveNote={removeNote}
+          onOpenNote={setSelectedNoteId}
         />
       </section>
 
       <AddNoteDialog
         open={isNoteDialogOpen}
         onClose={() => setIsNoteDialogOpen(false)}
-        onSave={addNote}
+        onSave={handleSaveNote}
       />
+
+      {selectedNoteId !== null ? (
+        <NoteDetailDialog
+          key={selectedNoteId}
+          projectId={projectId}
+          sourceId={selectedNoteId}
+          onClose={() => setSelectedNoteId(null)}
+        />
+      ) : null}
     </aside>
   );
 }

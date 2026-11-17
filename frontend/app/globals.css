@@ -112,6 +112,17 @@
   --text-heading-2--line-height: var(--line-height-heading-2);
   --text-heading-1: var(--font-size-heading-1);
   --text-heading-1--line-height: var(--line-height-heading-1);
+
+  --animate-context-shimmer: context-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes context-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
 }
 
 body {
