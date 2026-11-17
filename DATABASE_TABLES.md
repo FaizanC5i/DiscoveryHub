@@ -6,7 +6,7 @@ each table stores, its columns, its keys, and one sample row. The samples use ma
 of writing.
 
 The schema is created only by Alembic migrations in `backend/alembic/versions/`. Current
-revision: `009_rebuild_agent_tables`.
+revision: `010_checkpoint_answer_tables`.
 
 ---
 
@@ -15,20 +15,25 @@ revision: `009_rebuild_agent_tables`.
 | Table | Rows | Purpose | Written by |
 |---|---|---|---|
 | `users` | 34 | Accounts that can sign in | Sign-up, password reset |
-| `refresh_tokens` | 115 | Long-lived sign-in sessions | Login, refresh, logout |
+| `refresh_tokens` | 119 | Long-lived sign-in sessions | Login, refresh, logout |
 | `password_reset_tokens` | 4 | One-time password reset links | Forgot-password flow |
-| `projects` | 26 | Discovery projects, one owner each | Project create, edit, delete |
-| `context_sources` | 17 | Each uploaded document | Upload, retry, delete |
-| `context_content` | 17 | The text extracted from a document | Upload, retry |
-| `context_chunks` | 199 | Overlapping pieces of the text | Chunking, mapping job |
+| `projects` | 23 | Discovery projects, one owner each | Project create, edit, delete |
+| `context_sources` | 14 | Each uploaded document | Upload, retry, delete |
+| `context_content` | 14 | The text extracted from a document | Upload, retry |
+| `context_chunks` | 204 | Overlapping pieces of the text | Chunking, mapping job |
 | `discovery_pillars` | 3 | The three discovery areas (User, Data, Tech) | Migration 007 (fixed data) |
 | `discovery_checkpoints` | 15 | The questions each pillar must answer | Migration 007 (fixed data) |
 | `agents` | 4 | Who produced a mapping or run: the Helper Agent and the three pillar agents | Migrations 008 and 009 (seeded) |
-| `agent_runs` | 30 | One row per agent execution | Mapping job |
+| `agent_runs` | 31 | One row per agent execution | Mapping job |
 | `agent_run_checkpoints` | 0 | Per-checkpoint result inside one run. Helper runs do not write here. | Nothing yet |
 | `agent_run_chunks` | 0 | Chunks sent into one run. Helper runs do not write here. | Nothing yet |
-| `context_checkpoint_mappings` | 367 | A chunk tagged with a checkpoint | Mapping job |
-| `mapping_evidence` | 367 | The quote that justifies each mapping | Mapping job |
+| `context_checkpoint_mappings` | 407 | A chunk tagged with a checkpoint | Mapping job |
+| `mapping_evidence` | 407 | The quote that justifies each mapping | Mapping job |
+| `project_checkpoint_answers` | 0 | Current answer and completion state for each checkpoint in a project | Nothing yet (schema only) |
+| `checkpoint_answer_proposals` | 0 | AI-proposed answers, several per checkpoint answer | Nothing yet (schema only) |
+| `proposal_evidence` | 0 | Chunks and mappings that support a proposal | Nothing yet (schema only) |
+| `checkpoint_answer_versions` | 0 | Saved snapshots of each checkpoint answer | Nothing yet (schema only) |
+| `checkpoint_answer_evidence` | 0 | Chunks that support one saved answer version | Nothing yet (schema only) |
 | `alembic_version` | 1 | The migration revision the database is at | Alembic |
 
 ---
@@ -57,8 +62,21 @@ users ──< projects ──< context_sources ──< context_content ──< c
 
 `──<` means one-to-many. `>──` means many-to-one.
 
-Deleting a project removes its sources, text, chunks, agent runs and mappings (cascade).
-Deleting a user removes their projects, tokens and reset links.
+Checkpoint answer tables (migration 010), which hang off a project's checkpoint answers:
+
+```
+projects ──< project_checkpoint_answers ──< checkpoint_answer_proposals ──< proposal_evidence
+                  │                              │ (superseded_by, self-reference)
+                  │                              └──< checkpoint_answer_versions (proposal_id)
+                  ├──< checkpoint_answer_versions ──< checkpoint_answer_evidence >── context_chunks
+                  └──< checkpoint_answer_evidence
+discovery_checkpoints ──< project_checkpoint_answers
+users ──< project_checkpoint_answers (approved_by)     users ──< checkpoint_answer_versions (created_by)
+agent_runs ──< checkpoint_answer_proposals             agent_runs ──< proposal_evidence
+```
+
+Deleting a project removes its sources, text, chunks, agent runs, mappings and checkpoint answers
+(cascade). Deleting a user removes their projects, tokens and reset links.
 
 ---
 
@@ -447,13 +465,151 @@ stored rows.
 
 ---
 
+## project_checkpoint_answers
+
+The current answer and completion state for one checkpoint in one project. Created by migration
+010. Nothing writes to it yet. Each project has at most one row per checkpoint.
+
+| Column | Type | Nullable | Default | Meaning |
+|---|---|---|---|---|
+| `id` | BIGINT identity | no | | Primary key |
+| `project_id` | BIGINT | no | | FK to `projects.id`, cascade delete |
+| `checkpoint_id` | BIGINT | no | | FK to `discovery_checkpoints.id` |
+| `current_answer` | NVARCHAR(MAX) | yes | | The approved answer text |
+| `status` | NVARCHAR(30) | no | 'NOT_STARTED' | Answer state. The allowed values are not constrained yet. |
+| `is_completed` | BIT | no | 0 | Whether the checkpoint counts as complete |
+| `completion_score` | DECIMAL(3,2) | yes | | Between 0.00 and 1.00 |
+| `completion_updated_by_run_id` | BIGINT | yes | | FK to `agent_runs.id`: the run that last changed completion |
+| `completion_updated_at` | DATETIME2 | yes | | When completion last changed |
+| `approved_by` | BIGINT | yes | | FK to `users.id`: who approved the answer |
+| `approved_at` | DATETIME2 | yes | | When it was approved |
+| `updated_at` | DATETIME2 | no | UTC now | Last change to the row |
+
+Constraints: unique `(project_id, checkpoint_id)`; `completion_score` between 0 and 1 when set.
+Indexes: `(checkpoint_id)`, `(status)`.
+
+**Sample row**
+
+| id | project_id | checkpoint_id | current_answer | status | is_completed | completion_score | approved_by | approved_at |
+|---|---|---|---|---|---|---|---|---|
+| 40 | 12 | 301 | The ERP runs on a fixed on-premise server and cannot be upgraded before 2027. | APPROVED | 1 | 0.80 | 7 | 2026-11-03 10:00 |
+
+---
+
+## checkpoint_answer_proposals
+
+AI-proposed answers for a checkpoint answer. Many proposals can exist for one answer. Created by
+migration 010. Nothing writes to it yet. A proposal's project and checkpoint are reached through
+`current_answer_id`, so they are not repeated here.
+
+| Column | Type | Nullable | Default | Meaning |
+|---|---|---|---|---|
+| `id` | BIGINT identity | no | | Primary key |
+| `current_answer_id` | BIGINT | no | | FK to `project_checkpoint_answers.id`, cascade delete |
+| `agent_run_id` | BIGINT | no | | FK to `agent_runs.id`: the run that generated the proposal |
+| `base_version_number` | INT | no | | The answer version the proposal was written against. 0 or more. |
+| `proposed_answer` | NVARCHAR(MAX) | no | | The proposed answer text |
+| `completion_score` | DECIMAL(3,2) | yes | | Between 0.00 and 1.00 |
+| `status` | NVARCHAR(20) | no | 'PENDING' | Review state. The allowed values are not constrained yet. |
+| `superseded_by_proposal_id` | BIGINT | yes | | FK to this same table: the newer proposal that replaced this one |
+| `created_at` | DATETIME2 | no | UTC now | When generated |
+| `reviewed_at` | DATETIME2 | yes | | When reviewed |
+
+Constraints: `base_version_number >= 0`; `completion_score` between 0 and 1 when set.
+Indexes: `(current_answer_id)`, `(agent_run_id)`, `(status)`, and `(superseded_by_proposal_id)` where not NULL.
+
+**Sample row**
+
+| id | current_answer_id | agent_run_id | base_version_number | proposed_answer | completion_score | status | superseded_by_proposal_id | created_at |
+|---|---|---|---|---|---|---|---|---|
+| 61 | 40 | 71 | 0 | The ERP runs on a fixed on-premise server and cannot be upgraded before 2027. | 0.80 | PENDING | NULL | 2026-11-03 09:45 |
+
+---
+
+## proposal_evidence
+
+Links a proposal to the chunks and mappings that support it. The quote and reason are not copied
+here; they stay in `mapping_evidence`. Created by migration 010. Nothing writes to it yet.
+
+| Column | Type | Nullable | Default | Meaning |
+|---|---|---|---|---|
+| `id` | BIGINT identity | no | | Primary key |
+| `proposal_id` | BIGINT | no | | FK to `checkpoint_answer_proposals.id`, cascade delete |
+| `context_chunk_id` | BIGINT | no | | FK to `context_chunks.id`. No cascade. |
+| `mapping_id` | BIGINT | no | | FK to `context_checkpoint_mappings.id`. No cascade. |
+| `agent_run_id` | BIGINT | no | | FK to `agent_runs.id`. No cascade. |
+| `created_at` | DATETIME2 | no | UTC now | When linked |
+
+Constraints: unique `(proposal_id, mapping_id)`. Indexes on `proposal_id`, `context_chunk_id`,
+`mapping_id` and `agent_run_id`.
+
+**Sample row**
+
+| id | proposal_id | context_chunk_id | mapping_id | agent_run_id | created_at |
+|---|---|---|---|---|---|
+| 19 | 61 | 91 | 500 | 71 | 2026-11-03 09:45 |
+
+---
+
+## checkpoint_answer_versions
+
+Saved, numbered snapshots of a checkpoint answer. Old versions are never edited. Created by
+migration 010. Nothing writes to it yet.
+
+| Column | Type | Nullable | Default | Meaning |
+|---|---|---|---|---|
+| `id` | BIGINT identity | no | | Primary key |
+| `checkpoint_answer_id` | BIGINT | no | | FK to `project_checkpoint_answers.id`, cascade delete |
+| `version_number` | INT | no | | 1 or more. Unique per answer. |
+| `answer_text` | NVARCHAR(MAX) | no | | The answer text at this version |
+| `source` | NVARCHAR(20) | no | | `AI_PROPOSAL` or `MANUAL` |
+| `proposal_id` | BIGINT | yes | | FK to `checkpoint_answer_proposals.id`. Required when `source` is `AI_PROPOSAL`. |
+| `created_by` | BIGINT | no | | FK to `users.id`: who saved this version |
+| `created_at` | DATETIME2 | no | UTC now | When saved |
+
+Constraints: unique `(checkpoint_answer_id, version_number)`; `version_number >= 1`;
+`source` is `AI_PROPOSAL` or `MANUAL`; an `AI_PROPOSAL` version must have a `proposal_id`.
+Indexes: `(proposal_id)`, `(created_by)`.
+
+**Sample row**
+
+| id | checkpoint_answer_id | version_number | answer_text | source | proposal_id | created_by | created_at |
+|---|---|---|---|---|---|---|---|
+| 33 | 40 | 1 | The ERP runs on a fixed on-premise server and cannot be upgraded before 2027. | AI_PROPOSAL | 61 | 7 | 2026-11-03 10:00 |
+
+---
+
+## checkpoint_answer_evidence
+
+The document chunks that support one saved version of a checkpoint answer. Created by migration
+010. Nothing writes to it yet. The original chunks are never deleted by deleting an answer.
+
+| Column | Type | Nullable | Default | Meaning |
+|---|---|---|---|---|
+| `id` | BIGINT identity | no | | Primary key |
+| `checkpoint_answer_id` | BIGINT | no | | FK to `project_checkpoint_answers.id`. No cascade: the version cascade reaches these rows. |
+| `answer_version_id` | BIGINT | no | | FK to `checkpoint_answer_versions.id`, cascade delete |
+| `context_chunk_id` | BIGINT | no | | FK to `context_chunks.id`. No cascade. |
+| `created_at` | DATETIME2 | no | UTC now | When linked |
+
+Constraints: unique `(answer_version_id, context_chunk_id)`. Indexes on `checkpoint_answer_id`,
+`answer_version_id` and `context_chunk_id`.
+
+**Sample row**
+
+| id | checkpoint_answer_id | answer_version_id | context_chunk_id | created_at |
+|---|---|---|---|---|
+| 8 | 40 | 33 | 91 | 2026-11-03 10:00 |
+
+---
+
 ## alembic_version
 
 Used by Alembic to know which migration the database has reached. Do not edit it by hand.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `version_num` | VARCHAR(32) | Current revision: `009_rebuild_agent_tables` |
+| `version_num` | VARCHAR(32) | Current revision: `010_checkpoint_answer_tables` |
 
 ---
 
@@ -466,3 +622,8 @@ Used by Alembic to know which migration the database has reached. Do not edit it
 - **Immutable chunks:** chunk rows are never updated or deleted. A changed document gets new content and new chunks.
 - **Mapping history:** mappings are deactivated, not deleted, so the history of what was tagged stays available.
 - **Agent history:** the 7 `user_discovery` runs and their reply text remain in `agent_runs` after the feature was removed.
+- **Checkpoint answer tables are schema only.** They were created in migration 010 so future features
+  have a place to store answers, proposals, versions and evidence. No code writes to them yet, so they
+  have no rows. The sample rows above are illustrations of the intended shape.
+- **Status values:** the `status` columns on the answer and proposal tables are not constrained to a
+  fixed list yet. The sample values are examples.
