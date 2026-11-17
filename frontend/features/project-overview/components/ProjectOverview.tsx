@@ -9,6 +9,7 @@ import { ObjectivesCard } from "./ObjectivesCard";
 import { ProblemStatementCard } from "./ProblemStatementCard";
 import { ProjectSummaryCard } from "./ProjectSummaryCard";
 import { StakeholdersCard } from "./StakeholdersCard";
+import { UserDiscoveryCard } from "@/features/user-discovery/components/UserDiscoveryCard";
 
 interface ProjectOverviewProps {
   project: Project;
@@ -20,6 +21,7 @@ export function ProjectOverview({ project, sources }: ProjectOverviewProps) {
   return (
     <ContextLibraryWorkspace projectId={project.id} sources={sources}>
       <ProjectSummaryCard project={project} />
+      <UserDiscoveryCard projectId={project.id} />
       <ProblemStatementCard />
       <div className="grid gap-6 md:grid-cols-2">
         <ObjectivesCard />

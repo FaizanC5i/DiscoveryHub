@@ -28,4 +28,12 @@ export const API_PATHS = {
     detail: (projectId: number | string, noteId: number | string) =>
       `/api/projects/${projectId}/notes/${noteId}`,
   },
+    userDiscovery: {
+    overview: (projectId: number | string) => `/api/projects/${projectId}/user-discovery`,
+    runs: (projectId: number | string) => `/api/projects/${projectId}/user-discovery/runs`,
+    regenerate: (projectId: number | string, checkpointId: number | string) =>
+      `/api/projects/${projectId}/user-discovery/checkpoints/${checkpointId}/regenerate`,
+    approve: (projectId: number | string, proposalId: number | string) =>
+      `/api/projects/${projectId}/user-discovery/proposals/${proposalId}/approve`,
+  },
 } as const;
