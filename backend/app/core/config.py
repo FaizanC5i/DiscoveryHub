@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     # Chunks per agent call. Larger batches cut the number of calls and the repeated checkpoint prompt.
     mapping_batch_size: int = 20
 
+    agent5i_user_agent_name: str = "User Discovery Agent"
+    user_agent_timeout_seconds: int = 300
+
     # --- Pillar dispatch ----------------------------------------------------
     # Right after each Helper batch is saved, its new mappings are grouped per pillar agent.
     # Until the pillar agents exist, each package is written as JSON under backend/<this folder>.

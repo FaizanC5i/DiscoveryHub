@@ -169,50 +169,28 @@ class Project(Base):
 
 
 class ContextSource(Base):
-    """
-    A document attached to a project. The original file is in Blob Storage, and
-    this row describes it. The extracted text is stored in ContextContent.
-
-    Analogy: the index card in the filing cabinet. It says what the document is
-    and where it sits in the warehouse (blob_path). The document itself is not
-    in the cabinet.
-    """
+    """A document or note in a project. Files have a blob; notes have text only."""
 
     __tablename__ = "context_sources"
     __table_args__ = (
         Index("ix_context_sources_project_id_created_at", "project_id", "created_at"),
-        CheckConstraint(
-            "processing_status IN ('processing', 'ready', 'failed')",
-            name="ck_context_sources_status",
-        ),
-        CheckConstraint(
-            "source_type IN ('FILE_UPLOAD', 'MANUAL_NOTE')",
-            name="ck_context_sources_source_type",
-        ),
+        CheckConstraint("processing_status IN ('processing', 'ready', 'failed')", name="ck_context_sources_status"),
+        CheckConstraint("source_type IN ('FILE_UPLOAD', 'MANUAL_NOTE')", name="ck_context_sources_source_type"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    project_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
-    )
-    # No ondelete here on purpose: SQL Server rejects a second cascade path from users.
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     created_by: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
-    source_type: Mapped[str] = mapped_column(
-        NVARCHAR(30), nullable=False, server_default=text("'FILE_UPLOAD'")
-    )
+    source_type: Mapped[str] = mapped_column(NVARCHAR(30), nullable=False, server_default=text("'FILE_UPLOAD'"))
     title: Mapped[str] = mapped_column(NVARCHAR(255), nullable=False)
-    # Manual notes have no file, so these three are empty for them.
     original_filename: Mapped[str | None] = mapped_column(NVARCHAR(255), nullable=True)
     blob_path: Mapped[str | None] = mapped_column(NVARCHAR(500), nullable=True)
     mime_type: Mapped[str] = mapped_column(NVARCHAR(100), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     processing_status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
     failure_reason: Mapped[str | None] = mapped_column(NVARCHAR(500), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DATETIME2, nullable=False, server_default=UTC_NOW
-    )
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
     updated_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
-    # Soft delete: hidden from lists immediately, blob removed best-effort.
     deleted_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
 
     content: Mapped["ContextContent | None"] = relationship(
@@ -347,65 +325,28 @@ class Agent(Base):
 
 
 class AgentRun(Base):
-    """
-    One execution of an agent. Helper checkpoint-mapping runs are linked to the Helper Agent
-    and to their batch. Their per-chunk links are the mappings, not agent_run_chunks.
-    """
+    """One agent call: a mapping batch or a pillar answer run."""
 
     __tablename__ = "agent_runs"
-    __table_args__ = (
-        Index("ix_agent_runs_project_id_status", "project_id", "status"),
-        Index("ix_agent_runs_agent_id", "agent_id"),
-        Index("ix_agent_runs_batch_id", "batch_id"),
-        Index("ix_agent_runs_trigger_source_id", "trigger_source_id", mssql_where=text("trigger_source_id IS NOT NULL")),
-        CheckConstraint("status IN ('running', 'succeeded', 'failed')", name="ck_agent_runs_status"),
-        CheckConstraint(
-            "run_type IN ('checkpoint_mapping', 'user_discovery', 'brd_generate', 'brd_regenerate', 'brd_clarify')",
-            name="ck_agent_runs_run_type",
-        ),
-        Index("ix_agent_runs_project_artifact_id", "project_artifact_id", mssql_where=text("project_artifact_id IS NOT NULL")),
-        CheckConstraint("attempt_count >= 0", name="ck_agent_runs_attempt_count"),
-        CheckConstraint("input_payload IS NULL OR ISJSON(input_payload) = 1", name="ck_agent_runs_input_payload_json"),
-    )
+    __table_args__ = (Index("ix_agent_runs_project_id_status", "project_id", "status"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    project_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("projects.id", ondelete="CASCADE", name="fk_agent_runs_project_id_projects"),
-        nullable=False,
-    )
-    agent_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("agents.id", name="fk_agent_runs_agent_id_agents"), nullable=True
-    )
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("agents.id"), nullable=True)
     batch_id: Mapped[str | None] = mapped_column(NVARCHAR(50), nullable=True)
-    # NO ACTION: the project cascade already reaches agent_runs, so a second cascade path would be rejected.
-    trigger_source_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        ForeignKey("context_sources.id", name="fk_agent_runs_trigger_source_id_context_sources"),
-        nullable=True,
-    )
-    run_type: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False, server_default=text("'checkpoint_mapping'"))
+    trigger_source_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("context_sources.id"), nullable=True)
+    run_type: Mapped[str] = mapped_column(NVARCHAR(50), nullable=False, server_default="checkpoint_mapping")
     status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False)
     model: Mapped[str | None] = mapped_column(NVARCHAR(100), nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     input_payload: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
     raw_output: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
     error_message: Mapped[str | None] = mapped_column(NVARCHAR(1000), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
     completed_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
-    # BRD runs only: the BRD, and the section for a single-section regenerate or clarify.
-    # NO ACTION: the project cascade already reaches agent_runs.
-    project_artifact_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("project_artifacts.id", name="fk_agent_runs_project_artifact_id"), nullable=True
-    )
-    project_artifact_section_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        ForeignKey("project_artifact_sections.id", name="fk_agent_runs_project_artifact_section_id"),
-        nullable=True,
-    )
-
 
 class AgentRunCheckpoint(Base):
     """A per-checkpoint result inside one run. Helper runs do not write here."""
@@ -598,10 +539,34 @@ class CheckpointAnswerProposal(Base):
             "superseded_by_proposal_id",
             mssql_where=text("superseded_by_proposal_id IS NOT NULL"),
         ),
+        Index(
+            "ux_checkpoint_answer_proposals_one_pending",
+            "current_answer_id",
+            unique=True,
+            mssql_where=text("status = 'PENDING'"),
+        ),
         CheckConstraint("base_version_number >= 0", name="ck_checkpoint_answer_proposals_base_version_number"),
         CheckConstraint(
             "completion_score IS NULL OR (completion_score >= 0 AND completion_score <= 1)",
             name="ck_checkpoint_answer_proposals_completion_score",
+        ),
+        CheckConstraint("status IN ('PENDING', 'APPROVED', 'SUPERSEDED')", name="ck_checkpoint_answer_proposals_status"),
+        CheckConstraint(
+            "agent_status IN ('Pending Approval', 'Needs Clarification')",
+            name="ck_checkpoint_answer_proposals_agent_status",
+        ),
+        CheckConstraint(
+            "(is_completed = 1 AND agent_status = 'Pending Approval') "
+            "OR (is_completed = 0 AND agent_status = 'Needs Clarification')",
+            name="ck_checkpoint_answer_proposals_is_completed",
+        ),
+        CheckConstraint(
+            "missing_information IS NULL OR ISJSON(missing_information) = 1",
+            name="ck_checkpoint_answer_proposals_missing_json",
+        ),
+        CheckConstraint(
+            "clarification_questions IS NULL OR ISJSON(clarification_questions) = 1",
+            name="ck_checkpoint_answer_proposals_questions_json",
         ),
     )
 
@@ -623,6 +588,11 @@ class CheckpointAnswerProposal(Base):
     proposed_answer: Mapped[str] = mapped_column(NVARCHAR(length="max"), nullable=False)
     completion_score: Mapped[Decimal | None] = mapped_column(Numeric(3, 2), nullable=True)
     status: Mapped[str] = mapped_column(NVARCHAR(20), nullable=False, server_default=text("'PENDING'"))
+    # The agent's own status and completion flag, kept beside our status.
+    agent_status: Mapped[str] = mapped_column(NVARCHAR(30), nullable=False, server_default=text("'Needs Clarification'"))
+    is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
+    missing_information: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    clarification_questions: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
     # Self-reference with NO ACTION, so superseding never cascades into other proposals.
     superseded_by_proposal_id: Mapped[int | None] = mapped_column(
         BigInteger,
@@ -639,11 +609,10 @@ class CheckpointAnswerProposal(Base):
         foreign_keys="[CheckpointAnswerProposal.superseded_by_proposal_id]",
     )
 
-
 class ProposalEvidence(Base):
     """
-    Links a proposal to the chunks and mappings that support it. The quote and reason are not
-    copied here; they stay in mapping_evidence.
+    Links a proposal to the chunks and mappings that support it, with the agent's reason per chunk.
+    The quote itself stays in mapping_evidence.
     """
 
     __tablename__ = "proposal_evidence"
@@ -652,7 +621,6 @@ class ProposalEvidence(Base):
         Index("ix_proposal_evidence_proposal_id", "proposal_id"),
         Index("ix_proposal_evidence_context_chunk_id", "context_chunk_id"),
         Index("ix_proposal_evidence_mapping_id", "mapping_id"),
-        Index("ix_proposal_evidence_agent_run_id", "agent_run_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -667,13 +635,10 @@ class ProposalEvidence(Base):
     mapping_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("context_checkpoint_mappings.id", name="fk_proposal_evidence_mapping_id"), nullable=False
     )
-    agent_run_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("agent_runs.id", name="fk_proposal_evidence_agent_run_id"), nullable=False
-    )
+    reason: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
 
     proposal: Mapped[CheckpointAnswerProposal] = relationship()
-
 
 class CheckpointAnswerVersion(Base):
     """

@@ -171,7 +171,7 @@ def test_deleting_a_project_removes_its_whole_answer_chain(answer_setup):
         db.add(proposal)
         db.flush()
         db.add(ProposalEvidence(proposal_id=proposal.id, context_chunk_id=answer_setup["chunk_id"],
-                                mapping_id=answer_setup["mapping_id"], agent_run_id=answer_setup["run_id"]))
+                        mapping_id=answer_setup["mapping_id"]))
         version = CheckpointAnswerVersion(checkpoint_answer_id=answer.id, version_number=1, answer_text="Draft",
                                           source="AI_PROPOSAL", proposal_id=proposal.id,
                                           created_by=answer_setup["user_id"])
@@ -205,7 +205,7 @@ def test_deleting_an_answer_keeps_its_chunks_and_mappings(answer_setup):
         db.add(proposal)
         db.flush()
         db.add(ProposalEvidence(proposal_id=proposal.id, context_chunk_id=answer_setup["chunk_id"],
-                                mapping_id=answer_setup["mapping_id"], agent_run_id=answer_setup["run_id"]))
+                        mapping_id=answer_setup["mapping_id"]))
         db.commit()
 
         db.execute(delete(ProjectCheckpointAnswer).where(ProjectCheckpointAnswer.id == answer.id))
