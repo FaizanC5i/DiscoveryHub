@@ -68,6 +68,21 @@ def call_helper_agent(payload: dict) -> dict:
     return _post(payload, "agent5i_agent_name", HELPER_REQUEST_PREFIX)
 
 
+def call_brd_agent(text_input: str) -> dict:
+    """
+    BRD generation. The BRD agent reads one text input: the AGENT_REQUEST control block followed
+    by the approved checkpoint answers (built by brd_service), so the text is sent as it is.
+    """
+    settings = get_settings()
+    return _post_text(
+        text_input,
+        agent_name=settings.brd_agent_name,
+        username=settings.brd_agent5i_username or settings.agent5i_username,
+        password=settings.brd_agent5i_password or settings.agent5i_password,
+        timeout_seconds=settings.brd_timeout_seconds,
+    )
+
+
 def call_with_retry(call: Callable[[], T], description: str) -> T:
     """
     Up to MAX_ATTEMPTS attempts. Only timeouts and 5xx are retried, with waits of 2s, then 4s.
@@ -88,16 +103,31 @@ def call_with_retry(call: Callable[[], T], description: str) -> T:
             attempt += 1
 
 
+NOT_CONFIGURED = "Agent5i is not configured. Set the AGENT5I_* variables in backend/.env."
+
+
 def _post(payload: dict, agent_name_field: str, prefix: str) -> dict:
     settings = get_settings()
+    # Checked before any other setting is read, so a missing login is always a configuration error.
     if not (settings.agent5i_webhook_url and settings.agent5i_username and settings.agent5i_password):
-        raise AgentConfigurationError("Agent5i is not configured. Set the AGENT5I_* variables in backend/.env.")
-    agent_name = getattr(settings, agent_name_field)
+        raise AgentConfigurationError(NOT_CONFIGURED)
+    return _post_text(
+        prefix + json.dumps(payload, ensure_ascii=False),
+        agent_name=getattr(settings, agent_name_field),
+        username=settings.agent5i_username,
+        password=settings.agent5i_password,
+        timeout_seconds=settings.agent5i_timeout_seconds,
+    )
 
-    text_input = prefix + json.dumps(payload, ensure_ascii=False)
+
+def _post_text(text_input: str, agent_name: str, username: str, password: str, timeout_seconds: int) -> dict:
+    settings = get_settings()
+    if not (settings.agent5i_webhook_url and username and password):
+        raise AgentConfigurationError(NOT_CONFIGURED)
+
     body = {
-        "username": settings.agent5i_username,
-        "password": settings.agent5i_password,
+        "username": username,
+        "password": password,
         "name": agent_name,
         settings.agent5i_source_input_name: text_input,
     }
@@ -108,9 +138,9 @@ def _post(payload: dict, agent_name_field: str, prefix: str) -> dict:
         method="POST",
     )
 
-    timeout_message = f"Agent5i did not answer within {settings.agent5i_timeout_seconds} seconds."
+    timeout_message = f"Agent5i did not answer within {timeout_seconds} seconds."
     try:
-        with urlopen(request, timeout=settings.agent5i_timeout_seconds) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             raw = response.read()
     except HTTPError as exc:
         # HTTPError is a subclass of URLError, so it must be caught first.

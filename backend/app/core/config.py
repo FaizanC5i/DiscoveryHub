@@ -97,6 +97,14 @@ class Settings(BaseSettings):
     # Chunks per agent call. Larger batches cut the number of calls and the repeated checkpoint prompt.
     mapping_batch_size: int = 20
 
+    # --- Agent5i BRD agent (BRD generation from approved checkpoint answers) --
+    # Same webhook as the Helper. When the BRD agent lives in another Agent5i account, set
+    # BRD_AGENT5I_USERNAME / BRD_AGENT5I_PASSWORD; empty means "use the AGENT5I_* login".
+    brd_agent_name: str = "BRD Extraction Agent"
+    brd_agent5i_username: str = ""
+    brd_agent5i_password: str = ""
+    brd_timeout_seconds: int = 300
+
     @field_validator("jwt_secret_key")
     @classmethod
     def _secret_must_be_strong(cls, value: str) -> str:

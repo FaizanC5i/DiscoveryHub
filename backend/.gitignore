@@ -17,3 +17,6 @@ __pycache__/
 
 # Templates with placeholders only (safe to commit)
 !.env.example
+
+# Local agent packages (client document text). Never commit.
+agent_outbox/
