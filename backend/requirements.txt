@@ -28,6 +28,7 @@ python-multipart==0.0.20
 azure-storage-blob==12.24.0
 azure-ai-documentintelligence==1.0.2
 python-docx==1.1.2
+fpdf2==2.8.3  # PDF export of artifacts
 pdfplumber==0.11.7
 httpx2
 pytest==9.2.0

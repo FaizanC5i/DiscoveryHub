@@ -63,6 +63,7 @@ from app.db.models import (
     ProjectCheckpointAnswer,
 )
 from app.db.session import get_session_factory
+from app.services import artifact_readiness
 from app.services import brd_agent_io as io
 from app.services.agent_client import AgentError, call_brd_agent, call_with_retry
 
@@ -315,13 +316,18 @@ def _fallback_questions(section: ArtifactSection) -> list[str]:
 # ---------------------------------------------------------------------------------------------
 
 
-def start_generate(db: Session, owner_id: int, project_id: int) -> int:
+def start_generate(db: Session, owner_id: int, project_id: int, settings: dict | None = None) -> int:
+    """settings: the "Configure the draft" form ({title, audience, scope}); kept for later runs too."""
     _owned_project(db, owner_id, project_id)
     if not approved_answers(db, project_id):
         raise api_error(
             409, "NO_APPROVED_ANSWERS", "The BRD is written from approved checkpoint answers. None are approved yet."
         )
     artifact = _get_or_create_brd(db, project_id, owner_id)
+    if settings is not None:
+        artifact.title = (settings.get("title") or "").strip()[:255] or None
+        artifact.audience = (settings.get("audience") or "").strip()[:100] or None
+        artifact.scope = (settings.get("scope") or "").strip()[:1000] or None
     return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL})
 
 
@@ -497,9 +503,14 @@ def _run_generate(db: Session, run: AgentRun) -> None:
     if not answers:
         raise BrdRunError("No approved User Discovery answers yet.")
     as_of = latest_approval(db, run.project_id)
-    source = io.build_source_text(answers) + _all_clarifications_text(db, sections)
+    source = _settings_text(db, run) + io.build_source_text(answers) + _all_clarifications_text(db, sections)
     payload = json.loads(run.input_payload or "{}")
-    payload.update(answers_as_of=as_of.isoformat() if as_of else None, checkpoint_codes=[a["code"] for a in answers])
+    payload.update(
+        answers_as_of=as_of.isoformat() if as_of else None,
+        checkpoint_codes=[a["code"] for a in answers],
+        # What the draft was written from, shown in the editor banner.
+        snapshot=artifact_readiness.snapshot(db, run.project_id, _brd_pillar_ids(db)),
+    )
     run.input_payload = json.dumps(payload)
     db.commit()  # release the connection while the agent works
 
@@ -516,6 +527,11 @@ def _run_generate(db: Session, run: AgentRun) -> None:
     _mark_draft(db.get(ProjectArtifact, run.project_artifact_id), now)
     _succeed(run, result, calls, now)
     db.commit()
+
+
+def _settings_text(db: Session, run: AgentRun) -> str:
+    artifact = db.get(ProjectArtifact, run.project_artifact_id)
+    return io.build_document_settings(artifact.title, artifact.audience, artifact.scope)
 
 
 def _prefetch_questions(source: str, result: dict, keys: list[str]) -> int:
@@ -543,7 +559,7 @@ def _run_regenerate(db: Session, run: AgentRun) -> None:
     section = db.get(ProjectArtifactSection, run.project_artifact_section_id)
     key = section.section.section_key
     keys = [s.section.section_key for s in _section_rows(db, run.project_artifact_id)]
-    source = io.build_source_text(
+    source = _settings_text(db, run) + io.build_source_text(
         approved_answers(db, run.project_id, _feeding_checkpoint_ids(db, section.artifact_section_id))
     )
     clarification = io.format_clarifications(_clarification_pairs(db, section))
@@ -582,7 +598,7 @@ def _run_clarify(db: Session, run: AgentRun) -> None:
     section = db.get(ProjectArtifactSection, run.project_artifact_section_id)
     key = section.section.section_key
     keys = [s.section.section_key for s in _section_rows(db, run.project_artifact_id)]
-    source = io.build_source_text(
+    source = _settings_text(db, run) + io.build_source_text(
         approved_answers(db, run.project_id, _feeding_checkpoint_ids(db, section.artifact_section_id))
     )
     current = section.current_content or ""

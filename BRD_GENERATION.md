@@ -91,7 +91,32 @@ Add rows there only if a section should read fewer checkpoints.
 Section statuses use the frontend's names (`NOT_STARTED`, `DRAFT`, `PENDING_REVIEW`,
 `NEEDS_CLARIFICATION`, `APPROVED`), so `APPROVED` is used where the design doc says `CONFIRMED`.
 
-## API (all need login; other users' projects return 404)
+## Artifact Studio API (what the screens call)
+
+These are the paths already written in `frontend/features/artifact-studio/services/artifact-studio.service.ts`,
+and they return the shapes in `artifact-studio.types.ts`. The frontend only has to replace each placeholder
+body with the API call (`backend/app/api/routes/artifact_studio.py`, `services/artifact_studio_service.py`).
+
+| Screen | Method and path | Returns |
+|---|---|---|
+| Studio page | GET `/api/projects/{id}/artifact-studio` | `ArtifactStudioData`: 9 types, available artifacts, audiences, readiness per type (BRD: the 19 USR checkpoints) |
+| "Configure the draft" → Generate | POST `/api/projects/{id}/artifacts/BRD/generate` body `{title, audience, scope}` | 202 `{agentRunId}`. Title, audience and scope are saved and sent to the agent |
+| Draft editor | GET `/api/projects/{id}/artifacts/BRD` | `ArtifactDraft`: 5 sections as bullets, status, snapshot banner, versions. Extra: `audience`, `scope`, `isOutdated`, `latestRun`, `proposalId` per section |
+| Edit section | PUT `/api/projects/{id}/artifacts/BRD/sections/{sectionId}` body `{bullets}` | `DraftSection` |
+| Regenerate / Clarify | POST `.../sections/{sectionId}/regenerate` (body optional `{answers:[{question,answer}]}`) and `.../clarify` | 202 `{agentRunId}` |
+| Save new version | POST `/api/projects/{id}/artifacts/BRD/versions` | `{versionNumber, label}` |
+| Export | GET `/api/projects/{id}/artifacts/BRD/export?format=md\|docx\|pdf&sources=true&questions=true` | the file |
+
+`sectionId` is the section key (`business_objectives`, `users_stakeholders`, `current_state`, `scope`,
+`functional_requirements`). Other artifact codes answer 404 `ARTIFACT_NOT_AVAILABLE` until they are built.
+A section shows the agent's draft waiting for review first (PENDING_REVIEW), else its approved content,
+else the agent's questions (NEEDS_CLARIFICATION).
+
+**The BRD has 5 sections** (migration 016): Business Objectives, Users & Stakeholders, Current State, Scope,
+Functional Requirements. The other 9 are switched off (`artifact_sections.is_active = 0`), not deleted.
+The BRD agent may still write them; they are ignored.
+
+## BRD API (all need login; other users' projects return 404)
 
 | Method | Path | Does |
 |---|---|---|
@@ -127,6 +152,9 @@ BRD_AUTO_REFRESH=true           # regenerate the BRD when a User Discovery answe
 | `backend/alembic/versions/014_artifact_type_pillars.py` | BRD reads the User Discovery pillar only |
 | `backend/alembic/versions/015_one_running_brd_run.py` | One running BRD run per BRD; status data fix |
 | `backend/app/api/routes/answers.py` | Approving an answer queues `brd_service.refresh_brd` |
+| `backend/alembic/versions/016_artifact_draft_settings.py` | Title / audience / scope; 5 BRD sections |
+| `backend/app/services/artifact_readiness.py` | Verified / awaiting review / missing per checkpoint |
+| `backend/app/services/artifact_studio_service.py`, `api/routes/artifact_studio.py` | The screens' API, bullets, versions, export |
 | `backend/app/services/brd_agent_io.py` | Builds the agent input, reads the reply (pure) |
 | `backend/app/services/brd_service.py` | Runs, proposals, approve, edit, versions |
 | `backend/app/api/routes/brd.py`, `backend/app/schemas/brd.py` | Endpoints and shapes |
@@ -138,5 +166,6 @@ BRD_AUTO_REFRESH=true           # regenerate the BRD when a User Discovery answe
 - **The UI is not connected.** `frontend/features/artifact-studio/services/artifact-studio.service.ts` still
   returns placeholder data and its Generate function does nothing. It must call the endpoints above.
 
-- Word / PDF export of a version.
+- PDF export needs `fpdf2` (added to requirements.txt): run `pip install -r requirements.txt`.
+- The BRD agent's prompt still says "uploaded file" in its empty-section message; its owner can reword it.
 - `is_required` in `artifact_section_checkpoints` is stored but not enforced.

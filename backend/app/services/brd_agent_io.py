@@ -63,6 +63,18 @@ def build_source_text(answers: list[dict]) -> str:
     return "APPROVED DISCOVERY ANSWERS\n\n" + "\n\n".join(blocks)
 
 
+def build_document_settings(title: str | None, audience: str | None, scope: str | None) -> str:
+    """The "Configure the draft" choices, placed before the answers. Empty when none is set."""
+    lines = []
+    if title:
+        lines.append(f"Document title: {title}")
+    if audience:
+        lines.append(f"Audience: {audience} (write for this reader)")
+    if scope:
+        lines.append(f"Scope: {scope} (cover only this scope)")
+    return ("DOCUMENT SETTINGS\n" + "\n".join(lines) + "\n\n") if lines else ""
+
+
 def build_agent_input(
     source_text: str,
     mode: str,

@@ -845,6 +845,10 @@ class ProjectArtifact(Base):
     status: Mapped[str] = mapped_column(NVARCHAR(30), nullable=False, server_default=text("'NOT_STARTED'"))
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     instructions: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    # "Configure the draft" form (migration 016). Sent to the agent with every request.
+    title: Mapped[str | None] = mapped_column(NVARCHAR(255), nullable=True)
+    audience: Mapped[str | None] = mapped_column(NVARCHAR(100), nullable=True)
+    scope: Mapped[str | None] = mapped_column(NVARCHAR(1000), nullable=True)
     created_by: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", name="fk_project_artifacts_created_by"), nullable=False
     )
