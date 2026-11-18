@@ -180,6 +180,7 @@ def build_agent_batch(db: Session, project_id: int, checkpoint_ids: list[int] | 
                 for item in items
             ],
             "current_answer": answer_summary(answers.get(definition.id)),
+            "owner_input": answers[definition.id].owner_input if definition.id in answers else None,
         })
         sent.append(SentCheckpoint(
             id=definition.id,

@@ -30,6 +30,7 @@ export interface CurrentAnswer {
 export interface CheckpointCard {
   checkpoint: { id: number; code: string; name: string; question: string };
   current_answer: CurrentAnswer | null;
+  owner_input: string | null;
   chunk_count: number;
   evidence: EvidenceItem[];
   pending_proposal: ProposalView | null;

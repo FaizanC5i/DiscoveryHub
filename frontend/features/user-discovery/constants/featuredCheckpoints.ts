@@ -3,8 +3,8 @@
  * Update these values when dedicated checkpoints are seeded for each concept.
  */
 export const FEATURED = {
-  END_USERS: "USER01",        // Persona and Roles
-  PROBLEM_STATEMENT: "USER03", // Pain Points — replace with a dedicated code if added
-  OBJECTIVES: "USER04",       // User Requirements — replace with a dedicated code if added
-  STAKEHOLDERS: "USER05",     // Stakeholders
+  PROBLEM_STATEMENT: "USR-01", // Problem Statement
+  OBJECTIVES: "USR-02",        // Business Objectives
+  STAKEHOLDERS: "USR-09",      // Stakeholders and Sponsors
+  END_USERS: "USR-05",         // User Groups and Roles
 } as const;

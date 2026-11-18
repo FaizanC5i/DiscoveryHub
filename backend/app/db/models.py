@@ -521,6 +521,7 @@ class ProjectCheckpointAnswer(Base):
         nullable=False,
     )
     current_answer: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
+    owner_input: Mapped[str | None] = mapped_column(NVARCHAR(length="max"), nullable=True)
     status: Mapped[str] = mapped_column(NVARCHAR(30), nullable=False, server_default=text("'NOT_STARTED'"))
     is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
     completion_score: Mapped[Decimal | None] = mapped_column(Numeric(3, 2), nullable=True)

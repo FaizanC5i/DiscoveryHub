@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     agent5i_user_agent_name: str = "User Discovery Agent"
     user_agent_timeout_seconds: int = 300
 
+    # --- Agent5i Meeting Minutes agent (MoM assistant), same webhook and login as above ---
+    mom_agent_name: str = "Meeting Minutes"
+    mom_timeout_seconds: int = 300
+
     # --- Pillar dispatch ----------------------------------------------------
     # Right after each Helper batch is saved, its new mappings are grouped per pillar agent.
     # Until the pillar agents exist, each package is written as JSON under backend/<this folder>.

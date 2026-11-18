@@ -128,6 +128,7 @@ def build_overview(db: Session, project_id: int) -> dict:
         cards.append({
             "checkpoint": {"id": cp.id, "code": cp.code, "name": cp.name, "question": cp.question},
             "current_answer": answer_summary(answers.get(cp.id)),
+            "owner_input": answers[cp.id].owner_input if cp.id in answers else None,
             "chunk_count": len(items),
             "evidence": items,
             "pending_proposal": _proposal_view(db, proposal) if proposal else None,
@@ -149,6 +150,7 @@ def _pending_proposals(db: Session, project_id: int) -> dict[int, CheckpointAnsw
             ProjectCheckpointAnswer.project_id == project_id,
             CheckpointAnswerProposal.status == PROPOSAL_PENDING,
         )
+        .order_by(CheckpointAnswerProposal.id)
     ).all()
     return {checkpoint_id: proposal for proposal, checkpoint_id in rows}
 

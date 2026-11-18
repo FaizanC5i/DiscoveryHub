@@ -13,7 +13,7 @@ from app.db.session import get_db
 from app.dependencies.auth import CurrentUser
 from app.services import brd_service
 from app.services.answers import answer_review
-from app.services.answers.answer_pipeline import request_run, run_in_background
+from app.services.answers.answer_pipeline import request_run, run_in_background, save_owner_input
 from app.services.answers.common import ReviewError, require_owner
 
 router = APIRouter(prefix="/api/projects/{project_id}/user-discovery", tags=["user-discovery"])
@@ -82,3 +82,24 @@ def approve(
     # A new approved answer: rewrite the BRD in the background (its output arrives as proposals).
     background.add_task(brd_service.refresh_brd, project_id)
     return result
+
+
+class OwnerInputBody(BaseModel):
+    text: str
+
+
+@router.post("/checkpoints/{checkpoint_id}/input", status_code=202)
+def submit_owner_input(
+    project_id: int,
+    checkpoint_id: int,
+    body: OwnerInputBody,
+    background: BackgroundTasks,
+    user: CurrentUser,
+    db: DbSession,
+) -> dict:
+    try:
+        save_owner_input(db, user.id, project_id, checkpoint_id, body.text)
+    except ReviewError as exc:
+        raise _refuse(exc) from None
+    background.add_task(run_in_background, project_id, [checkpoint_id])
+    return {"status": "started"}

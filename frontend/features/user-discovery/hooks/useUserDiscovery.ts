@@ -6,6 +6,7 @@ import {
   getUserDiscovery,
   regenerateCheckpoint,
   startUserDiscoveryRun,
+  submitOwnerInput,
 } from "../services/userDiscoveryService";
 import type { UserDiscoveryOverview } from "../types/userDiscovery";
 
@@ -75,6 +76,8 @@ export function useUserDiscovery(projectId: number) {
     startRun: () => perform(() => startUserDiscoveryRun(projectId), true),
     regenerate: (checkpointId: number) =>
       perform(() => regenerateCheckpoint(projectId, checkpointId), true),
+    submitInput: (checkpointId: number, text: string) =>
+      perform(() => submitOwnerInput(projectId, checkpointId, text), true),
     approve: (proposalId: number, overrideText?: string) =>
       perform(() => approveProposal(projectId, proposalId, overrideText), false),
   };

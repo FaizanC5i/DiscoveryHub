@@ -23,6 +23,7 @@ from app.api.routes.mappings import router as mappings_router
 from app.api.routes.brd import router as brd_router
 from app.api.routes.artifact_studio import router as artifact_studio_router
 from app.api.routes.answers import router as answers_router
+from app.api.routes.mom import router as mom_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,6 +80,7 @@ app.include_router(mappings_router)
 app.include_router(brd_router)
 app.include_router(artifact_studio_router)
 app.include_router(answers_router)
+app.include_router(mom_router)
 
 
 @app.get("/")

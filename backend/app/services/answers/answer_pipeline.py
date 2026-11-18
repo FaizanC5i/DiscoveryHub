@@ -39,6 +39,7 @@ from app.services.answers.user_agent import (
 )
 from app.services.answers.user_context import (
     DB_AGENT_CODE,
+    active_user_checkpoints,
     build_agent_batch,
     pending_mapping_count,
     project_mapping_rows,
@@ -90,6 +91,25 @@ def request_run(db: Session, owner_id: int, project_id: int, checkpoint_ids: lis
         )
     if not project_mapping_rows(db, project_id, checkpoint_ids):
         raise ReviewError(422, "NO_EVIDENCE", "There is no mapped evidence to send.")
+
+
+def save_owner_input(db: Session, owner_id: int, project_id: int, checkpoint_id: int, text: str) -> None:
+    """Stores the owner's own answer for one checkpoint, to be sent with the next run for it."""
+    require_owner(db, owner_id, project_id)
+    cleaned = text.strip()
+    if not cleaned:
+        raise ReviewError(422, "EMPTY_INPUT", "Write something before sending.")
+    if checkpoint_id not in active_user_checkpoints(db):
+        raise ReviewError(404, "CHECKPOINT_NOT_FOUND", "This checkpoint is not part of User Discovery.")
+    if is_running(project_id):
+        raise ReviewError(409, "RUN_ALREADY_IN_PROGRESS", "A User Discovery run is already in progress.")
+    pending = pending_mapping_count(db, project_id)
+    if pending:
+        raise ReviewError(409, "MAPPING_IN_PROGRESS", f"{pending} chunks are still being mapped.")
+    answer = get_or_create_answer(db, project_id, checkpoint_id)
+    answer.owner_input = cleaned
+    answer.updated_at = utc_now()
+    db.commit()
 
 
 def run_in_background(project_id: int, checkpoint_ids: list[int] | None) -> None:

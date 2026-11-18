@@ -137,7 +137,11 @@ def delete_project(db: Session, storage: BlobStorage, owner_id: int, project_id:
     if project is None:
         return False
 
-    blob_paths = list(db.scalars(select(ContextSource.blob_path).where(ContextSource.project_id == project_id)))
+    blob_paths = [
+        path
+        for path in db.scalars(select(ContextSource.blob_path).where(ContextSource.project_id == project_id))
+        if path
+    ]
 
     # Commit the database first: if a blob delete fails later, the project is still gone
     # and only an orphaned file is left, which is safer than files pointing at nothing.

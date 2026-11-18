@@ -83,6 +83,18 @@ def call_brd_agent(text_input: str) -> dict:
     )
 
 
+def call_mom_agent(payload: dict) -> dict:
+    """Meeting minutes: the payload is sent as JSON text in source_files, as the agent expects."""
+    settings = get_settings()
+    return _post_text(
+        json.dumps(payload, ensure_ascii=False),
+        agent_name=settings.mom_agent_name,
+        username=settings.agent5i_username,
+        password=settings.agent5i_password,
+        timeout_seconds=settings.mom_timeout_seconds,
+    )
+
+
 def call_with_retry(call: Callable[[], T], description: str) -> T:
     """
     Up to MAX_ATTEMPTS attempts. Only timeouts and 5xx are retried, with waits of 2s, then 4s.

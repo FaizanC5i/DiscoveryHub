@@ -148,6 +148,14 @@ export function ChevronLeftIcon(props: IconProps) {
   );
 }
 
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="m9 18 6-6-6-6" />
+    </BaseIcon>
+  );
+}
+
 export function CloseIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>

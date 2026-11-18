@@ -149,7 +149,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
  *   - FastAPI:    { "detail": [{ "msg": "...", ... }] }   (validation, 422)
  *   - anything else: fall back to a generic message.
  */
-async function toApiError(response: Response): Promise<ApiError> {
+export async function toApiError(response: Response): Promise<ApiError> {
   const fallback = `Request failed with status ${response.status}`;
   let body: { detail?: unknown } = {};
   try {

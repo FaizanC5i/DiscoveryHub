@@ -38,6 +38,8 @@ from app.db.models import (
 from app.db.session import get_session_factory
 from app.services import pillar_dispatch_service
 from app.services.agent_client import AgentError, call_helper_agent, call_with_retry
+from app.services.answers import answer_pipeline
+from app.services.answers.user_context import pending_mapping_count, project_mapping_rows
 from app.services.mapping_payload_service import build_mapping_request
 from app.services.mapping_validation_service import (
     BatchValidation,
@@ -84,6 +86,9 @@ def run_mapping_job(chunk_ids: list[int]) -> None:
     for project_id, ids in claimed:
         for start in range(0, len(ids), batch_size):
             map_batch(project_id, ids[start : start + batch_size])
+
+    for project_id, _ in claimed:
+        _start_user_discovery_if_ready(project_id)
 
 
 def map_batch(project_id: int, chunk_ids: list[int]) -> BatchOutcome | None:
@@ -145,6 +150,25 @@ def map_batch(project_id: int, chunk_ids: list[int]) -> BatchOutcome | None:
     if outcome.kept:
         _dispatch_to_pillar_agents(agent_run_id)
     return outcome
+
+
+def _start_user_discovery_if_ready(project_id: int) -> None:
+    """
+    After mapping finishes, start a User Discovery run if all chunks are mapped,
+    there is evidence for the project, and no run is already in progress.
+    Failures here are logged and never affect the mapping outcome.
+    """
+    try:
+        with get_session_factory()() as db:
+            if pending_mapping_count(db, project_id):
+                return
+            if not project_mapping_rows(db, project_id):
+                return
+            if answer_pipeline.is_running(project_id):
+                return
+        answer_pipeline.run_in_background(project_id, None)
+    except Exception:
+        log.exception("Could not auto-start User Discovery for project %s", project_id)
 
 
 def _dispatch_to_pillar_agents(agent_run_id: int) -> None:

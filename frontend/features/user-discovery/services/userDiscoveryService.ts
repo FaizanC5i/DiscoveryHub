@@ -16,6 +16,17 @@ export function regenerateCheckpoint(projectId: number, checkpointId: number): P
   });
 }
 
+export function submitOwnerInput(
+  projectId: number,
+  checkpointId: number,
+  text: string,
+): Promise<{ status: string }> {
+  return apiRequest<{ status: string }>(API_PATHS.userDiscovery.input(projectId, checkpointId), {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
 export function approveProposal(
   projectId: number,
   proposalId: number,

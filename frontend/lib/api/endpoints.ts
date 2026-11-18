@@ -33,7 +33,15 @@ export const API_PATHS = {
     runs: (projectId: number | string) => `/api/projects/${projectId}/user-discovery/runs`,
     regenerate: (projectId: number | string, checkpointId: number | string) =>
       `/api/projects/${projectId}/user-discovery/checkpoints/${checkpointId}/regenerate`,
+    input: (projectId: number | string, checkpointId: number | string) =>
+      `/api/projects/${projectId}/user-discovery/checkpoints/${checkpointId}/input`,
     approve: (projectId: number | string, proposalId: number | string) =>
       `/api/projects/${projectId}/user-discovery/proposals/${proposalId}/approve`,
+  },
+  mom: {
+    transcripts: "/api/mom/transcripts",
+    minutes: "/api/mom/minutes",
+    detailedSummary: "/api/mom/detailed-summary",
+    download: "/api/mom/download",
   },
 } as const;

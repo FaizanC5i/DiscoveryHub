@@ -15,6 +15,7 @@ interface CheckpointReviewPanelProps {
   error: string | null;
   onClose: () => void;
   onApprove: (proposalId: number, text: string) => Promise<void>;
+  onSubmitInput?: (text: string) => Promise<void>;
 }
 
 export function CheckpointReviewPanel({
@@ -23,10 +24,12 @@ export function CheckpointReviewPanel({
   error,
   onClose,
   onApprove,
+  onSubmitInput,
 }: CheckpointReviewPanelProps) {
   const proposal = card.pending_proposal;
   const approved = card.current_answer?.status === "APPROVED" ? card.current_answer : null;
   const [editedText, setEditedText] = useState(proposal?.proposed_answer ?? "");
+  const [ownerText, setOwnerText] = useState(card.owner_input ?? "");
   const panelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -47,7 +50,7 @@ export function CheckpointReviewPanel({
 
   const hasText = editedText.trim().length > 0;
   const textChanged = proposal ? editedText !== proposal.proposed_answer : false;
-  const status = statusOf(card);
+  const status = statusOf(card) ?? { label: "No answer yet", tone: "neutral" as const };
 
   async function handleApprove() {
     if (!proposal) return;
@@ -158,6 +161,31 @@ export function CheckpointReviewPanel({
               No proposal yet. Run User Discovery to generate an answer for this checkpoint.
             </p>
           )}
+
+          {onSubmitInput ? (
+            <section className="flex flex-col gap-3 border-t border-border-subtle pt-6">
+              <h3 className="text-body-medium font-semibold text-fg">Your input</h3>
+              <p className="text-caption text-fg-muted">
+                Add what you know about this question. Sending it runs User Discovery again for this checkpoint.
+              </p>
+              <Textarea
+                value={ownerText}
+                onChange={(e) => setOwnerText(e.target.value)}
+                disabled={busy}
+                rows={5}
+                placeholder="Write your answer or the details the agent should use…"
+              />
+              <div>
+                <Button
+                  variant="outline"
+                  disabled={ownerText.trim().length === 0 || busy}
+                  onClick={() => void onSubmitInput(ownerText)}
+                >
+                  Send to agent
+                </Button>
+              </div>
+            </section>
+          ) : null}
         </div>
 
         {proposal ? (

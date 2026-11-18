@@ -2,16 +2,14 @@ import type { CheckpointCard } from "../types/userDiscovery";
 
 export interface StatusView {
   label: string;
-  tone: "success" | "brand" | "neutral";
+  tone: "success" | "brand" | "neutral" | "warning";
 }
 
-export function statusOf(card: CheckpointCard): StatusView {
+export function statusOf(card: CheckpointCard): StatusView | null {
   if (card.current_answer?.status === "APPROVED") return { label: "Approved", tone: "success" };
-  if (card.pending_proposal) {
-    return card.pending_proposal.proposed_answer.trim()
-      ? { label: "Ready to review", tone: "brand" }
-      : { label: "Needs clarification", tone: "neutral" };
+  if (card.pending_proposal?.agent_status === "Needs Clarification") {
+    return { label: "Clarification needed", tone: "warning" };
   }
-  if (card.chunk_count === 0) return { label: "No evidence", tone: "neutral" };
-  return { label: "Not generated", tone: "neutral" };
+  if (card.pending_proposal) return { label: "Not reviewed", tone: "brand" };
+  return null;
 }
