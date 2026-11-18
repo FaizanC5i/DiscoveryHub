@@ -163,8 +163,9 @@ BRD_AUTO_REFRESH=true           # regenerate the BRD when a User Discovery answe
 
 ## Not done yet
 
-- **The UI is not connected.** `frontend/features/artifact-studio/services/artifact-studio.service.ts` still
-  returns placeholder data and its Generate function does nothing. It must call the endpoints above.
+- The Artifact Studio screens are connected (`artifact-studio.service.ts`). The Document title default still
+  comes from the Discovery overview placeholder (`features/discovery/services/discovery.service.ts`).
+- Regenerate / Clarify buttons and an answer box for the questions are not wired in the editor yet.
 
 - PDF export needs `fpdf2` (added to requirements.txt): run `pip install -r requirements.txt`.
 - The BRD agent's prompt still says "uploaded file" in its empty-section message; its owner can reword it.

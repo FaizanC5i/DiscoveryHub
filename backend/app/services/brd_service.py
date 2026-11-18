@@ -40,7 +40,7 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy import func, select, true, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer, joinedload
 
 from app.core.config import get_settings
 from app.core.errors import api_error
@@ -162,6 +162,7 @@ def _section_rows(db: Session, artifact_id: int) -> list[ProjectArtifactSection]
         db.scalars(
             select(ProjectArtifactSection)
             .join(ArtifactSection, ArtifactSection.id == ProjectArtifactSection.artifact_section_id)
+            .options(joinedload(ProjectArtifactSection.section))
             .where(ProjectArtifactSection.project_artifact_id == artifact_id, ArtifactSection.is_active == true())
             .order_by(ArtifactSection.sort_order)
         )
@@ -188,14 +189,17 @@ def _feeding_checkpoint_ids(db: Session, artifact_section_id: int) -> set[int] |
 
 
 def _brd_pillar_ids(db: Session) -> set[int]:
-    """The pillars whose answers the BRD is written from (artifact_type_pillars). User Discovery today."""
-    return set(
-        db.scalars(
-            select(ArtifactTypePillar.pillar_id)
-            .join(ArtifactType, ArtifactType.id == ArtifactTypePillar.artifact_type_id)
-            .where(ArtifactType.code == ARTIFACT_CODE)
+    """The pillars whose answers the BRD is written from (artifact_type_pillars). User Discovery today.
+    Read once per session (one request or one job): it is configuration and many helpers need it."""
+    if "brd_pillar_ids" not in db.info:
+        db.info["brd_pillar_ids"] = set(
+            db.scalars(
+                select(ArtifactTypePillar.pillar_id)
+                .join(ArtifactType, ArtifactType.id == ArtifactTypePillar.artifact_type_id)
+                .where(ArtifactType.code == ARTIFACT_CODE)
+            )
         )
-    )
+    return db.info["brd_pillar_ids"]
 
 
 def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | None = None) -> list[dict]:
@@ -228,6 +232,21 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
         for code, name, pillar, question, answer in db.execute(query).all()
         if answer and answer.strip()
     ]
+
+
+def approved_answer_count(db: Session, project_id: int) -> int:
+    """How many BRD input answers are approved, without downloading their text."""
+    return db.scalar(
+        select(func.count())
+        .select_from(ProjectCheckpointAnswer)
+        .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
+        .where(
+            ProjectCheckpointAnswer.project_id == project_id,
+            ProjectCheckpointAnswer.approved_at.is_not(None),
+            func.len(func.ltrim(ProjectCheckpointAnswer.current_answer)) > 0,
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
+        )
+    ) or 0
 
 
 def latest_approval(db: Session, project_id: int):
@@ -713,7 +732,7 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
     artifact_type = _brd_type(db)
     artifact = _find_brd(db, project_id, artifact_type.id)
     feeds = _feeds_by_section(db, artifact_type.id)
-    approved_count = len(approved_answers(db, project_id))
+    approved_count = approved_answer_count(db, project_id)
 
     if artifact is None:
         return {
@@ -729,20 +748,37 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
             "latest_run": None,
         }
 
-    sections = []
-    for row in _section_rows(db, artifact.id):
-        clarifications = list(
-            db.scalars(
-                select(ArtifactSectionClarification)
-                .where(ArtifactSectionClarification.project_artifact_section_id == row.id)
-                .order_by(ArtifactSectionClarification.id)
-            )
+    rows = _section_rows(db, artifact.id)
+    ids = [row.id for row in rows]
+    # One query each for every section's open proposal and saved clarifications (the database is remote).
+    open_proposals: dict[int, ArtifactSectionProposal] = {}
+    for proposal in db.scalars(
+        select(ArtifactSectionProposal)
+        .where(
+            ArtifactSectionProposal.project_artifact_section_id.in_(ids),
+            ArtifactSectionProposal.status.in_(OPEN_PROPOSAL_STATUSES),
         )
-        sections.append(
-            _section_dict(row, row.section, feeds.get(row.artifact_section_id, []), _open_proposal(db, row.id), clarifications)
+        .order_by(ArtifactSectionProposal.id)
+    ):
+        open_proposals[proposal.project_artifact_section_id] = proposal  # newest wins
+    clarifications: dict[int, list[ArtifactSectionClarification]] = {}
+    for clarification in db.scalars(
+        select(ArtifactSectionClarification)
+        .where(ArtifactSectionClarification.project_artifact_section_id.in_(ids))
+        .order_by(ArtifactSectionClarification.id)
+    ):
+        clarifications.setdefault(clarification.project_artifact_section_id, []).append(clarification)
+    sections = [
+        _section_dict(
+            row, row.section, feeds.get(row.artifact_section_id, []), open_proposals.get(row.id), clarifications.get(row.id, [])
         )
+        for row in rows
+    ]
     latest = db.scalar(
-        select(AgentRun).where(AgentRun.project_artifact_id == artifact.id).order_by(AgentRun.id.desc())
+        select(AgentRun)
+        .options(defer(AgentRun.raw_output), defer(AgentRun.input_payload))  # large texts the page does not show
+        .where(AgentRun.project_artifact_id == artifact.id)
+        .order_by(AgentRun.id.desc())
     )
     return {
         "project_id": project_id,

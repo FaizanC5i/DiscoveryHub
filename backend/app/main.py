@@ -41,7 +41,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    # Lets the browser read the file name of an artifact export.
+    expose_headers=["Content-Disposition"],
     allow_headers=["Content-Type"],
 )
 

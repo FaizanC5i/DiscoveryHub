@@ -48,6 +48,13 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
     };
   }, [projectId, code, reloadKey]);
 
+  // While the agent is still writing the draft, check again every 10 seconds (not while editing).
+  useEffect(() => {
+    if (draft?.status !== "Generating" || isEditing) return;
+    const timer = setTimeout(() => setReloadKey((k) => k + 1), 10_000);
+    return () => clearTimeout(timer);
+  }, [draft, isEditing]);
+
   function retry() {
     setError(null);
     setDraft(null);

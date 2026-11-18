@@ -35,12 +35,13 @@ def checkpoint_states(db: Session, project_id: int, pillar_ids: set[int] | None)
     checkpoints = db.execute(query).all()
 
     answers = {
-        checkpoint_id: (approved_at, text)
-        for checkpoint_id, approved_at, text in db.execute(
+        checkpoint_id: (approved_at, length)
+        for checkpoint_id, approved_at, length in db.execute(
             select(
                 ProjectCheckpointAnswer.checkpoint_id,
                 ProjectCheckpointAnswer.approved_at,
-                ProjectCheckpointAnswer.current_answer,
+                # The length only: downloading every answer's text is slow over a remote connection.
+                func.len(func.ltrim(ProjectCheckpointAnswer.current_answer)),
             ).where(ProjectCheckpointAnswer.project_id == project_id)
         ).all()
     }
@@ -54,8 +55,8 @@ def checkpoint_states(db: Session, project_id: int, pillar_ids: set[int] | None)
 
     rows = []
     for checkpoint_id, code, pillar_id, pillar_code, pillar_name in checkpoints:
-        approved_at, text = answers.get(checkpoint_id, (None, None))
-        if approved_at is not None and (text or "").strip():
+        approved_at, length = answers.get(checkpoint_id, (None, None))
+        if approved_at is not None and length:
             state = "verified"
         elif checkpoint_id in pending:
             state = "review"
@@ -70,7 +71,13 @@ def checkpoint_states(db: Session, project_id: int, pillar_ids: set[int] | None)
 
 def readiness(db: Session, project_id: int, pillar_ids: set[int] | None) -> dict:
     """The "Review evidence readiness" card: totals, percent, and one row per pillar."""
-    rows = checkpoint_states(db, project_id, pillar_ids)
+    return summarize(checkpoint_states(db, project_id, pillar_ids))
+
+
+def summarize(rows: list[dict], pillar_ids: set[int] | None = None) -> dict:
+    """readiness() from rows already read (limited to pillar_ids when given), so one read serves many types."""
+    if pillar_ids is not None:
+        rows = [r for r in rows if r["pillar_id"] in pillar_ids]
     total = len(rows)
     verified = sum(r["state"] == "verified" for r in rows)
     review = sum(r["state"] == "review" for r in rows)

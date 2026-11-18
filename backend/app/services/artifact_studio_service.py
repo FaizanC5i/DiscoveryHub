@@ -107,10 +107,11 @@ def studio_data(db: Session, owner_id: int, project_id: int) -> dict:
     ):
         available.append({"code": code, "status": "ready" if status == "APPROVED" else "draft"})
 
+    states = artifact_readiness.checkpoint_states(db, project_id, None)  # read once, shared by every type
     readiness = {}
     for item in ARTIFACT_CATALOG:
         pillar_ids = pillars_by_type.get(type_ids.get(item["code"], -1))  # None = every pillar
-        readiness[item["code"]] = artifact_readiness.readiness(db, project_id, pillar_ids)
+        readiness[item["code"]] = artifact_readiness.summarize(states, pillar_ids)
 
     return {
         "artifactTypes": ARTIFACT_CATALOG,
@@ -143,6 +144,11 @@ def draft(db: Session, owner_id: int, project_id: int, code: str) -> dict:
 
     sections = [_draft_section(s) for s in brd["sections"]]
     ready = artifact_readiness.readiness(db, project_id, pillar_ids)
+    current_snapshot = {
+        "verified": ready["verified"], "total": ready["total"],
+        "sources": artifact_readiness.source_count(db, project_id),
+        "missing": ready["withoutEvidence"], "unreviewedExcluded": ready["awaitingReview"],
+    }
     is_client_ready = (
         ready["total"] > 0
         and ready["verified"] == ready["total"]
@@ -165,7 +171,7 @@ def draft(db: Session, owner_id: int, project_id: int, code: str) -> dict:
         "description": project.description or "",
         "status": status,
         "isClientReady": is_client_ready,
-        "snapshot": _generation_snapshot(db, artifact) or artifact_readiness.snapshot(db, project_id, pillar_ids),
+        "snapshot": _generation_snapshot(db, artifact) or current_snapshot,
         "versions": _versions(db, artifact),
         "sections": sections,
         # Extra fields the screen can use (not in the placeholder types yet).
