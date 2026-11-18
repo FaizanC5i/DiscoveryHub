@@ -347,6 +347,17 @@ class AgentRun(Base):
     error_message: Mapped[str | None] = mapped_column(NVARCHAR(1000), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
     completed_at: Mapped[datetime | None] = mapped_column(DATETIME2, nullable=True)
+    # BRD runs only (migration 012): the BRD, and the section for a single-section regenerate or clarify.
+    # NO ACTION: the project cascade already reaches agent_runs.
+    project_artifact_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("project_artifacts.id", name="fk_agent_runs_project_artifact_id"), nullable=True
+    )
+    project_artifact_section_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("project_artifact_sections.id", name="fk_agent_runs_project_artifact_section_id"),
+        nullable=True,
+    )
+
 
 class AgentRunCheckpoint(Base):
     """A per-checkpoint result inside one run. Helper runs do not write here."""
@@ -734,6 +745,24 @@ class ArtifactType(Base):
         BigInteger, ForeignKey("agents.id", name="fk_artifact_types_agent_id"), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
+
+
+class ArtifactTypePillar(Base):
+    """A discovery pillar whose APPROVED answers an artifact type is written from (BRD: User)."""
+
+    __tablename__ = "artifact_type_pillars"
+    __table_args__ = (UniqueConstraint("artifact_type_id", "pillar_id", name="uq_artifact_type_pillars"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    artifact_type_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("artifact_types.id", ondelete="CASCADE", name="fk_artifact_type_pillars_artifact_type_id"),
+        nullable=False,
+    )
+    pillar_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("discovery_pillars.id", name="fk_artifact_type_pillars_pillar_id"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DATETIME2, nullable=False, server_default=UTC_NOW)
 
 

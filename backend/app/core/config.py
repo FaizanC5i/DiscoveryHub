@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     brd_agent5i_username: str = ""
     brd_agent5i_password: str = ""
     brd_timeout_seconds: int = 300
+    # Regenerate the BRD in the background whenever a User Discovery answer is approved.
+    brd_auto_refresh: bool = True
 
     @field_validator("jwt_secret_key")
     @classmethod

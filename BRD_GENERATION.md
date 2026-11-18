@@ -1,8 +1,16 @@
 # BRD generation
 
-The BRD is written by the Agent5i **BRD Extraction Agent** from the project's **approved checkpoint
-answers** (`project_checkpoint_answers` rows with `approved_at` set). It no longer reads uploaded files.
+The BRD is written by the Agent5i **BRD Extraction Agent** from the project's **approved User Discovery
+answers**: `project_checkpoint_answers` rows with `approved_at` set, for the checkpoints USR-01 to USR-19.
+Answers of other pillars are not sent (`artifact_type_pillars`: BRD → USER). It does not read uploaded files.
 Everything else works like the stand-alone BRD app: generate, clarify, regenerate, edit, approve.
+
+**The BRD keeps itself up to date.** When a User Discovery answer is approved
+(`POST /api/projects/{id}/user-discovery/proposals/{pid}/approve`), the BRD is regenerated in the
+background (`brd_service.refresh_brd`). The first approved answer creates the BRD. Answers approved while
+a BRD run is busy are picked up by one more run when it ends. The new text arrives as proposals, so
+approved BRD content is never overwritten. `GET .../brd` returns `is_outdated` and `answers_as_of`.
+Turn it off with `BRD_AUTO_REFRESH=false`.
 
 ## Flow
 
@@ -12,12 +20,14 @@ approved checkpoint answers ──► BRD agent ──► proposals (one per sec
                                                        approve BRD ──► frozen version (v1, v2 ...)
 ```
 
-1. **Generate** – one agent call writes all 14 sections from every approved answer. Sections the agent
+1. **Generate** – one agent call writes all 14 sections from every approved User Discovery answer,
+   plus the user's saved clarification answers of every section (so a refresh keeps them). Sections the agent
    cannot write come back as `NEEDS_CLARIFICATION`, each with up to 3 questions (fetched automatically
    if the agent gave none).
 2. **Clarify** – the agent asks up to 3 questions for one section.
 3. **Regenerate** – the agent rewrites one section from:
-   the approved answers of the checkpoints that feed it (`artifact_section_checkpoints`),
+   every approved User Discovery answer (or only the checkpoints listed for the section in
+   `artifact_section_checkpoints`, when there are rows; there are none today),
    the user's saved clarification answers, and the section's current content.
    If the agent fails, the existing content is kept.
 4. **Edit** – the user's own text becomes the section's approved content.
@@ -45,7 +55,7 @@ END_AGENT_REQUEST
 ORIGINAL_SOURCE_DOCUMENT:
 APPROVED DISCOVERY ANSWERS
 
---- CHECKPOINT USER05: Stakeholders (User pillar) ---
+--- CHECKPOINT USR-09: Stakeholders and Sponsors (User Discovery pillar) ---
 Question: ...
 Approved answer:
 ...
@@ -54,11 +64,12 @@ Approved answer:
 The agent's prompt on Agent5i still talks about an "uploaded file"; its owner may want to say
 "approved discovery answers" instead. The reply format did not change.
 
-## Tables (migration `012_brd_artifact_tables`, design doc PART 12)
+## Tables (migrations `012_brd_artifact_tables` and `014_artifact_type_pillars`, design doc PART 12)
 
 | Table | What it holds |
 |---|---|
 | `artifact_types` | Kinds of document. BRD is one row, linked to `BRD_AGENT` |
+| `artifact_type_pillars` | Which pillars' answers each type reads. BRD → USER (PRD later: USER + TECH) |
 | `artifact_sections` | The 14 BRD sections (template) |
 | `artifact_section_checkpoints` | Which checkpoints feed which section (Assumptions has none = reads every answer) |
 | `project_artifacts` | One BRD per project: `NOT_STARTED` / `DRAFT` / `IN_REVIEW` / `APPROVED`, current version |
@@ -69,24 +80,9 @@ The agent's prompt on Agent5i still talks about an "uploaded file"; its owner ma
 | `agent_runs` (changed) | + `project_artifact_id`, `project_artifact_section_id`; `run_type` also allows the 3 BRD values |
 | `agents` (new row) | `BRD_AGENT` |
 
-Section → checkpoints routing (configuration, change it in `artifact_section_checkpoints`):
-
-| Section | Fed by |
-|---|---|
-| Business Objectives | USER03, USER04, USER05 |
-| Users & Stakeholders | USER01, USER05 |
-| Current State | USER02, USER03, TECH01, DATA01 |
-| Scope | USER02, USER04 |
-| Functional Requirements | USER02, USER04 |
-| Out of Scope | USER04 |
-| Business Rules | USER02, DATA02, DATA05 |
-| Constraints | TECH03, TECH05 |
-| Assumptions | all approved answers |
-| Dependencies | TECH02, DATA01, DATA03, TECH05 |
-| Success Criteria | USER03, USER04 |
-| Risks | USER03, DATA02, TECH03, TECH04 |
-| Integrations | TECH01, TECH02, DATA04 |
-| Security & Compliance | TECH04, DATA03, DATA05 |
+Section → checkpoints routing: `artifact_section_checkpoints` is empty for the BRD since the old
+checkpoints were replaced by USR-01..USR-19, so every section reads every approved User Discovery answer.
+Add rows there only if a section should read fewer checkpoints.
 
 Section statuses use the frontend's names (`NOT_STARTED`, `DRAFT`, `PENDING_REVIEW`,
 `NEEDS_CLARIFICATION`, `APPROVED`), so `APPROVED` is used where the design doc says `CONFIRMED`.
@@ -116,6 +112,7 @@ BRD_AGENT_NAME=BRD Extraction Agent
 BRD_AGENT5I_USERNAME=           # only if the BRD agent is in another Agent5i account
 BRD_AGENT5I_PASSWORD=
 BRD_TIMEOUT_SECONDS=300
+BRD_AUTO_REFRESH=true           # regenerate the BRD when a User Discovery answer is approved
 ```
 
 ## Code
@@ -123,6 +120,8 @@ BRD_TIMEOUT_SECONDS=300
 | File | Role |
 |---|---|
 | `backend/alembic/versions/012_create_brd_artifact_tables.py` | Tables, seed, agent_runs change |
+| `backend/alembic/versions/014_artifact_type_pillars.py` | BRD reads the User Discovery pillar only |
+| `backend/app/api/routes/answers.py` | Approving an answer queues `brd_service.refresh_brd` |
 | `backend/app/services/brd_agent_io.py` | Builds the agent input, reads the reply (pure) |
 | `backend/app/services/brd_service.py` | Runs, proposals, approve, edit, versions |
 | `backend/app/api/routes/brd.py`, `backend/app/schemas/brd.py` | Endpoints and shapes |

@@ -1,5 +1,13 @@
 """
-BRD generation from the project's APPROVED checkpoint answers.
+BRD generation from the project's APPROVED User Discovery answers.
+
+Which answers: every approved answer of the pillars listed for the BRD in artifact_type_pillars
+(User Discovery only). A section reads only its own checkpoints when artifact_section_checkpoints
+has rows for it; otherwise it reads all of them (the case for every BRD section today).
+
+Kept up to date: approving a User Discovery answer calls refresh_brd(), which regenerates the BRD
+in the background. Answers approved while a run is busy are picked up by one more run at the end.
+The new text arrives as proposals, so approved BRD content is never overwritten.
 
 Flow (same as the stand-alone BRD app; only the input changed):
 1. generate      -> one agent call writes all 14 sections from every approved answer.
@@ -27,11 +35,13 @@ Correctness:
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta
 
-from sqlalchemy import select, true
+from fastapi import HTTPException
+from sqlalchemy import func, select, true
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.errors import api_error
 from app.core.time import utc_now
 from app.db.models import (
@@ -42,6 +52,7 @@ from app.db.models import (
     ArtifactSectionClarification,
     ArtifactSectionProposal,
     ArtifactType,
+    ArtifactTypePillar,
     DiscoveryCheckpoint,
     DiscoveryPillar,
     Project,
@@ -68,6 +79,8 @@ STALE_RUN_MINUTES = 30
 PARSE_ATTEMPTS = 2
 PREFETCH_WORKERS = 4
 GENERIC_FAILURE = "The BRD could not be generated. Please try again."
+# Automatic refreshes started back to back at most (answers approved while a run was busy).
+MAX_REFRESH_CHAIN = 5
 
 
 class BrdRunError(Exception):
@@ -171,10 +184,21 @@ def _feeding_checkpoint_ids(db: Session, artifact_section_id: int) -> set[int] |
     return ids or None
 
 
+def _brd_pillar_ids(db: Session) -> set[int]:
+    """The pillars whose answers the BRD is written from (artifact_type_pillars). User Discovery today."""
+    return set(
+        db.scalars(
+            select(ArtifactTypePillar.pillar_id)
+            .join(ArtifactType, ArtifactType.id == ArtifactTypePillar.artifact_type_id)
+            .where(ArtifactType.code == ARTIFACT_CODE)
+        )
+    )
+
+
 def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | None = None) -> list[dict]:
     """
-    The project's APPROVED checkpoint answers (approved_at is set and the answer is not empty),
-    ordered by pillar and checkpoint. Limited to checkpoint_ids when given.
+    The project's APPROVED answers (approved_at is set and the answer is not empty) of the BRD's
+    pillars, ordered by pillar and checkpoint. Limited to checkpoint_ids when given.
     """
     query = (
         select(
@@ -190,6 +214,7 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
             ProjectCheckpointAnswer.project_id == project_id,
             ProjectCheckpointAnswer.approved_at.is_not(None),
             ProjectCheckpointAnswer.current_answer.is_not(None),
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
         )
         .order_by(DiscoveryPillar.id, DiscoveryCheckpoint.sort_order, DiscoveryCheckpoint.code)
     )
@@ -200,6 +225,55 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
         for code, name, pillar, question, answer in db.execute(query).all()
         if answer and answer.strip()
     ]
+
+
+def latest_approval(db: Session, project_id: int):
+    """When the newest BRD input answer was approved (None when nothing is approved)."""
+    return db.scalar(
+        select(func.max(ProjectCheckpointAnswer.approved_at))
+        .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
+        .where(
+            ProjectCheckpointAnswer.project_id == project_id,
+            ProjectCheckpointAnswer.current_answer.is_not(None),
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
+        )
+    )
+
+
+def _answers_as_of(db: Session, artifact_id: int):
+    """The newest approval the last successful generate run had read (None when there was none)."""
+    payload = db.scalar(
+        select(AgentRun.input_payload)
+        .where(
+            AgentRun.project_artifact_id == artifact_id,
+            AgentRun.run_type == RUN_GENERATE,
+            AgentRun.status == "succeeded",
+        )
+        .order_by(AgentRun.id.desc())
+    )
+    value = json.loads(payload or "{}").get("answers_as_of")
+    return datetime.fromisoformat(value) if value else None
+
+
+def _is_outdated(db: Session, project_id: int, artifact: ProjectArtifact | None) -> bool:
+    newest = latest_approval(db, project_id)
+    if newest is None:
+        return False
+    as_of = _answers_as_of(db, artifact.id) if artifact else None
+    return as_of is None or newest > as_of
+
+
+def _all_clarifications_text(db: Session, sections: list[ProjectArtifactSection]) -> str:
+    """The user's saved clarification answers of every section, so a full regeneration keeps them."""
+    blocks = []
+    for section in sections:
+        pairs = _clarification_pairs(db, section)
+        if pairs:
+            blocks.append(
+                f"--- USER CLARIFICATIONS FOR SECTION {section.section.section_key} ({section.section.title}) ---\n"
+                + io.format_clarifications(pairs)
+            )
+    return ("\n\nUSER CLARIFICATION ANSWERS\n\n" + "\n\n".join(blocks)) if blocks else ""
 
 
 def _open_proposal(db: Session, section_id: int) -> ArtifactSectionProposal | None:
@@ -333,17 +407,53 @@ def _new_run(
 # ---------------------------------------------------------------------------------------------
 
 
-def run_brd_job(agent_run_id: int) -> None:
+def refresh_brd(project_id: int, _chain: int = 0) -> None:
+    """
+    Regenerate the project's BRD when an approved User Discovery answer is newer than what the BRD
+    was last written from. Called in the background after an answer is approved. Never raises.
+
+    When a BRD run is already busy, nothing starts now: that run checks again when it finishes.
+    The BRD is created on the first approved answer if the project has none yet.
+    """
+    if not get_settings().brd_auto_refresh or _chain >= MAX_REFRESH_CHAIN:
+        return
+    try:
+        with get_session_factory()() as db:
+            project = db.get(Project, project_id)
+            if project is None or not approved_answers(db, project_id):
+                return
+            artifact = _find_brd(db, project_id, _brd_type(db).id)
+            if not _is_outdated(db, project_id, artifact):
+                return
+            artifact = _get_or_create_brd(db, project_id, project.owner_id)
+            try:
+                run_id = _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL, "trigger": "auto"})
+            except HTTPException:
+                db.rollback()  # a run is busy; it re-checks when it ends
+                return
+    except Exception:  # noqa: BLE001 - a refresh must never break the approval that triggered it
+        log.exception("Could not start the BRD refresh for project %s", project_id)
+        return
+    log.info("BRD refresh started for project %s (run %s)", project_id, run_id)
+    run_brd_job(run_id, _chain + 1)
+
+
+def run_brd_job(agent_run_id: int, _chain: int = 0) -> None:
     """Run one queued BRD run. Never raises: a failure is recorded on the run."""
+    project_id = None
     try:
         with get_session_factory()() as db:
             run = db.get(AgentRun, agent_run_id)
             if run is None or run.status != "running":
                 return
+            project_id = run.project_id
             handlers = {RUN_GENERATE: _run_generate, RUN_REGENERATE: _run_regenerate, RUN_CLARIFY: _run_clarify}
             handlers[run.run_type](db, run)
     except Exception as exc:  # noqa: BLE001 - recorded on the run, never lost
         _record_failure(agent_run_id, exc)
+        return
+    # Answers approved while this run was busy: write the BRD once more with them.
+    refresh_brd(project_id, _chain)
 
 
 def _call_and_parse(text_input: str, section_keys: list[str], mode: str, target: str) -> tuple[dict, int]:
@@ -362,7 +472,14 @@ def _call_and_parse(text_input: str, section_keys: list[str], mode: str, target:
 def _run_generate(db: Session, run: AgentRun) -> None:
     sections = _section_rows(db, run.project_artifact_id)
     keys = [s.section.section_key for s in sections]
-    source = io.build_source_text(approved_answers(db, run.project_id))
+    answers = approved_answers(db, run.project_id)
+    if not answers:
+        raise BrdRunError("No approved User Discovery answers yet.")
+    as_of = latest_approval(db, run.project_id)
+    source = io.build_source_text(answers) + _all_clarifications_text(db, sections)
+    payload = json.loads(run.input_payload or "{}")
+    payload.update(answers_as_of=as_of.isoformat() if as_of else None, checkpoint_codes=[a["code"] for a in answers])
+    run.input_payload = json.dumps(payload)
     db.commit()  # release the connection while the agent works
 
     result, calls = _call_and_parse(io.build_agent_input(source, io.MODE_GENERATE_ALL), keys, io.MODE_GENERATE_ALL, "")
@@ -564,6 +681,8 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
             "status": "NOT_STARTED",
             "current_version": 0,
             "approved_answer_count": approved_count,
+            "is_outdated": _is_outdated(db, project_id, None),
+            "answers_as_of": None,
             "sections": [
                 _section_dict(None, template, feeds.get(template.id, []), None, []) for template in _template(db, artifact_type.id)
             ],
@@ -590,6 +709,8 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
         "status": artifact.status,
         "current_version": artifact.current_version,
         "approved_answer_count": approved_count,
+        "is_outdated": _is_outdated(db, project_id, artifact),
+        "answers_as_of": _answers_as_of(db, artifact.id),
         "sections": sections,
         "latest_run": _run_dict(db, latest) if latest else None,
     }

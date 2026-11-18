@@ -71,6 +71,9 @@ class BrdRead(BaseModel):
     status: str
     current_version: int
     approved_answer_count: int
+    # True when an answer was approved after the BRD was last generated.
+    is_outdated: bool
+    answers_as_of: UtcDatetime | None
     sections: list[BrdSection]
     latest_run: BrdRun | None
 

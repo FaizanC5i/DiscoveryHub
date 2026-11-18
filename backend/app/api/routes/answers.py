@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import api_error
 from app.db.session import get_db
 from app.dependencies.auth import CurrentUser
+from app.services import brd_service
 from app.services.answers import answer_review
 from app.services.answers.answer_pipeline import request_run, run_in_background
 from app.services.answers.common import ReviewError, require_owner
@@ -66,14 +67,18 @@ def regenerate(
 def approve(
     project_id: int,
     proposal_id: int,
+    background: BackgroundTasks,
     user: CurrentUser,
     db: DbSession,
     body: Annotated[ApproveBody, Body()] = ApproveBody(),
 ) -> dict:
     try:
-        return answer_review.approve_proposal(
+        result = answer_review.approve_proposal(
             db, user.id, project_id, proposal_id,
             override_text=body.override_text,
         )
     except ReviewError as exc:
         raise _refuse(exc) from None
+    # A new approved answer: rewrite the BRD in the background (its output arrives as proposals).
+    background.add_task(brd_service.refresh_brd, project_id)
+    return result
