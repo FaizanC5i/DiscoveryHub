@@ -10,6 +10,7 @@ import type {
   ArtifactCode,
   ArtifactDraft,
   ArtifactStudioData,
+  ClarificationAnswer,
   DraftConfig,
   DraftSection,
   ExportOptions,
@@ -61,6 +62,42 @@ export async function saveDraftSection(
     method: "PUT",
     body: JSON.stringify({ bullets }),
   });
+}
+/**
+ * Rewrite one section with the agent. Pass the Clarify answers to use them; without answers the
+ * agent rewrites from the approved discovery answers. Runs in the background: the draft's
+ * latestRun is "running" until it is done. Returns the agent run id.
+ * Backend: POST /api/projects/{projectId}/artifacts/{code}/sections/{sectionId}/regenerate  body: { answers }
+ */
+export async function regenerateDraftSection(
+  projectId: string,
+  code: ArtifactCode,
+  sectionId: string,
+  answers: ClarificationAnswer[] = [],
+): Promise<number> {
+  const result = await apiRequest<{ agentRunId: number }>(
+    `${artifactPath(projectId, code)}/sections/${encodeURIComponent(sectionId)}/regenerate`,
+    { method: "POST", body: JSON.stringify({ answers }) },
+  );
+  return result.agentRunId;
+}
+
+/**
+ * Ask the agent for up to 3 questions that would improve one section. Runs in the background;
+ * when latestRun finishes, the section's clarificationQuestions hold the questions.
+ * Returns the agent run id.
+ * Backend: POST /api/projects/{projectId}/artifacts/{code}/sections/{sectionId}/clarify
+ */
+export async function requestSectionClarification(
+  projectId: string,
+  code: ArtifactCode,
+  sectionId: string,
+): Promise<number> {
+  const result = await apiRequest<{ agentRunId: number }>(
+    `${artifactPath(projectId, code)}/sections/${encodeURIComponent(sectionId)}/clarify`,
+    { method: "POST" },
+  );
+  return result.agentRunId;
 }
 
 /**

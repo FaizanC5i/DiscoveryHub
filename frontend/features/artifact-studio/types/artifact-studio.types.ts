@@ -91,6 +91,20 @@ export interface DraftSnapshot {
   missing: number;
   unreviewedExcluded: number;
 }
+/** One answer to a Clarify question, sent with Regenerate. */
+export interface ClarificationAnswer {
+  question: string;
+  answer: string;
+}
+
+/** The newest agent run for this artifact (generate, regenerate or clarify). Shape from the backend. */
+export interface DraftRun {
+  id: number;
+  run_type: "brd_generate" | "brd_regenerate" | "brd_clarify" | string;
+  status: "running" | "succeeded" | "failed" | string;
+  section_key: string | null;
+  error_message: string | null;
+}
 
 export interface ArtifactDraft {
   artifactCode: ArtifactCode;
@@ -100,8 +114,10 @@ export interface ArtifactDraft {
   status: string; // "In Progress"
   isClientReady: boolean;
   snapshot: DraftSnapshot;
-  versions: DraftVersion[];
+   versions: DraftVersion[];
   sections: DraftSection[];
+  /** Newest agent run; status "running" while the agent is working. */
+  latestRun?: DraftRun | null;
 }
 
 export type ExportFormat = "md" | "docx" | "pdf";

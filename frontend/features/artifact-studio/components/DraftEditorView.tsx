@@ -1,21 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageError, PageLoading } from "@/features/discovery/components/PageStatus";
 import { badgeClass, cardClass } from "@/features/discovery/utils/class-names";
 import {
   exportArtifactDraft,
   getArtifactDraft,
+  regenerateDraftSection,
+  requestSectionClarification,
   saveDraftSection,
   saveDraftVersion,
 } from "../services/artifact-studio.service";
-import type { ArtifactCode, ArtifactDraft, ExportOptions } from "../types/artifact-studio.types";
+import type {
+  ArtifactCode,
+  ArtifactDraft,
+  ClarificationAnswer,
+  DraftSection,
+  ExportOptions,
+} from "../types/artifact-studio.types";
+import { ClarifyDialog } from "./ClarifyDialog";
 import { DraftExportBar } from "./DraftExportBar";
-import { DraftSectionContent } from "./DraftSectionContent";
+import { DraftSectionContent, type SectionActivity } from "./DraftSectionContent";
 import { DraftSectionNav } from "./DraftSectionNav";
 import { DraftStatusBanner } from "./DraftStatusBanner";
 import { DraftVersionsCard } from "./DraftVersionsCard";
+
+/** A Regenerate or Clarify run started from this page, followed until it finishes. */
+interface PendingRun {
+  runId: number;
+  sectionId: string;
+  kind: "regenerate" | "clarify";
+}
+
+/** How often to check a section run (seconds matter here) and a full generation. */
+const SECTION_POLL_MS = 3_000;
+const GENERATION_POLL_MS = 10_000;
 
 interface DraftEditorViewProps {
   projectId: string;
@@ -33,12 +53,49 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSavingVersion, setIsSavingVersion] = useState(false);
+  const [pending, setPending] = useState<PendingRun | null>(null);
+  const [clarifySectionId, setClarifySectionId] = useState<string | null>(null);
+  const [sectionMessages, setSectionMessages] = useState<Record<string, string>>({});
+  // The load callback reads the pending run without re-subscribing the effect.
+  const pendingRef = useRef<PendingRun | null>(null);
+
+  function setPendingRun(run: PendingRun | null) {
+    pendingRef.current = run;
+    setPending(run);
+  }
+
+  function setSectionMessage(sectionId: string, message: string | null) {
+    setSectionMessages((current) => {
+      const next = { ...current };
+      if (message) next[sectionId] = message;
+      else delete next[sectionId];
+      return next;
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
     getArtifactDraft(projectId, code)
       .then((result) => {
-        if (!cancelled) setDraft(result);
+        if (cancelled) return;
+        setDraft(result);
+
+        // Did the run started from this page finish?
+        const run = pendingRef.current;
+        const latest = result.latestRun;
+        if (!run || !latest || latest.id !== run.runId || latest.status === "running") return;
+        pendingRef.current = null;
+        setPending(null);
+
+        if (latest.status === "failed") {
+          setSectionMessage(run.sectionId, latest.error_message ?? "The agent could not finish. Please try again.");
+          return;
+        }
+        if (run.kind === "clarify") {
+          const section = result.sections.find((s) => s.id === run.sectionId);
+          if (section?.clarificationQuestions?.length) setClarifySectionId(run.sectionId);
+          else setSectionMessage(run.sectionId, "No questions came back for this section. Please try again.");
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Could not load the draft.");
@@ -48,12 +105,15 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
     };
   }, [projectId, code, reloadKey]);
 
-  // While the agent is still writing the draft, check again every 10 seconds (not while editing).
+  // While the agent is working, check again: every 3 s for a section run started here,
+  // every 10 s for a full generation (paused while editing, so nothing moves under the cursor).
   useEffect(() => {
-    if (draft?.status !== "Generating" || isEditing) return;
-    const timer = setTimeout(() => setReloadKey((k) => k + 1), 10_000);
+    if (!draft) return;
+    const isRunning = pending !== null || draft.latestRun?.status === "running" || draft.status === "Generating";
+    if (!isRunning || (isEditing && pending === null)) return;
+    const timer = setTimeout(() => setReloadKey((k) => k + 1), pending ? SECTION_POLL_MS : GENERATION_POLL_MS);
     return () => clearTimeout(timer);
-  }, [draft, isEditing]);
+  }, [draft, isEditing, pending]);
 
   function retry() {
     setError(null);
@@ -66,6 +126,56 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
     setDraft((current) =>
       current ? { ...current, sections: current.sections.map((s) => (s.id === sectionId ? updated : s)) } : current,
     );
+  }
+
+  /** Regenerate: rewrite the section with the agent (answers come from Clarify). */
+  async function startRegenerate(sectionId: string, answers: ClarificationAnswer[] = []) {
+    const runId = await regenerateDraftSection(projectId, code, sectionId, answers);
+    setPendingRun({ runId, sectionId, kind: "regenerate" });
+    setReloadKey((k) => k + 1);
+  }
+
+  async function handleRegenerate(sectionId: string) {
+    setSectionMessage(sectionId, null);
+    try {
+      await startRegenerate(sectionId);
+    } catch (e) {
+      setSectionMessage(sectionId, e instanceof Error ? e.message : "Could not start regenerating.");
+    }
+  }
+
+  /** Clarify: open the questions if the section has them, otherwise ask the agent for them first. */
+  async function handleClarify(section: DraftSection) {
+    setSectionMessage(section.id, null);
+    if (section.clarificationQuestions?.length) {
+      setClarifySectionId(section.id);
+      return;
+    }
+    try {
+      const runId = await requestSectionClarification(projectId, code, section.id);
+      setPendingRun({ runId, sectionId: section.id, kind: "clarify" });
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setSectionMessage(section.id, e instanceof Error ? e.message : "Could not prepare questions.");
+    }
+  }
+
+  /** Submit & Regenerate in the Clarify dialog. Errors stay in the dialog. */
+  async function handleClarifySubmit(answers: ClarificationAnswer[]) {
+    if (!clarifySectionId) return;
+    await startRegenerate(clarifySectionId, answers);
+    setClarifySectionId(null);
+  }
+
+  /** What the agent is doing for a section: from this page's run, or a run found on load. */
+  function activityFor(sectionId: string): SectionActivity {
+    if (pending?.sectionId === sectionId) return pending.kind;
+    const run = draft?.latestRun;
+    if (run?.status === "running" && run.section_key === sectionId) {
+      if (run.run_type === "brd_regenerate") return "regenerate";
+      if (run.run_type === "brd_clarify") return "clarify";
+    }
+    return null;
   }
 
   async function handleSaveVersion() {
@@ -98,6 +208,8 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
   if (!draft) return <PageLoading label="Loading draft…" />;
 
   const activeSection = draft.sections.find((s) => s.id === activeSectionId) ?? draft.sections[0]!;
+  const clarifySection = draft.sections.find((s) => s.id === clarifySectionId) ?? null;
+  const isAgentBusy = pending !== null || draft.latestRun?.status === "running" || draft.status === "Generating";
 
   return (
     <div className="flex flex-col gap-(--space-6)">
@@ -147,12 +259,23 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
                 section={activeSection}
                 onSave={(bullets) => handleSaveSection(activeSection.id, bullets)}
                 onEditingChange={setIsEditing}
+                onRegenerate={() => void handleRegenerate(activeSection.id)}
+                onClarify={() => void handleClarify(activeSection)}
+                activity={activityFor(activeSection.id)}
+                isAgentBusy={isAgentBusy}
+                message={sectionMessages[activeSection.id] ?? null}
               />
             </article>
           </div>
         </div>
 
       <DraftExportBar isClientReady={draft.isClientReady} onExport={handleExport} />
+
+      <ClarifyDialog
+        section={clarifySection}
+        onClose={() => setClarifySectionId(null)}
+        onSubmit={handleClarifySubmit}
+      />
     </div>
   );
 }
