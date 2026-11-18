@@ -38,7 +38,13 @@ PROPOSAL_SUPERSEDED = "SUPERSEDED"
 ANSWER_APPROVED = "APPROVED"
 
 
-def approve_proposal(db: Session, owner_id: int, project_id: int, proposal_id: int) -> dict:
+def approve_proposal(
+    db: Session,
+    owner_id: int,
+    project_id: int,
+    proposal_id: int,
+    override_text: str | None = None,
+) -> dict:
     require_owner(db, owner_id, project_id)
 
     proposal = db.scalar(
@@ -52,7 +58,11 @@ def approve_proposal(db: Session, owner_id: int, project_id: int, proposal_id: i
         raise ReviewError(409, "ALREADY_APPROVED", "This proposal is already approved.")
     if proposal.status == PROPOSAL_SUPERSEDED:
         raise ReviewError(409, "PROPOSAL_SUPERSEDED", "A newer proposal replaced this one. Approve the latest proposal.")
-    if not proposal.proposed_answer.strip():
+    final_text = override_text.strip() if override_text else ""
+    answer_text = final_text if final_text else proposal.proposed_answer
+    source = "MANUAL" if final_text else "AI_PROPOSAL"
+
+    if not answer_text.strip():
         raise ReviewError(409, "NO_ANSWER_TO_APPROVE", "The agent has not written an answer yet. Regenerate it.")
 
     answer = db.get(ProjectCheckpointAnswer, proposal.current_answer_id)
@@ -64,8 +74,8 @@ def approve_proposal(db: Session, owner_id: int, project_id: int, proposal_id: i
     version = CheckpointAnswerVersion(
         checkpoint_answer_id=answer.id,
         version_number=latest + 1,
-        answer_text=proposal.proposed_answer,
-        source="AI_PROPOSAL",
+        answer_text=answer_text,
+        source=source,
         proposal_id=proposal.id,
         created_by=owner_id,
         created_at=now,
@@ -73,7 +83,7 @@ def approve_proposal(db: Session, owner_id: int, project_id: int, proposal_id: i
     db.add(version)
     db.flush()
 
-    answer.current_answer = proposal.proposed_answer
+    answer.current_answer = answer_text
     answer.status = ANSWER_APPROVED
     answer.is_completed = proposal.is_completed
     answer.completion_score = proposal.completion_score

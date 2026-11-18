@@ -2,9 +2,10 @@
 User Discovery endpoints. Every route checks ownership first. Other users get 404.
 """
 
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Body, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.errors import api_error
@@ -15,6 +16,10 @@ from app.services.answers.answer_pipeline import request_run, run_in_background
 from app.services.answers.common import ReviewError, require_owner
 
 router = APIRouter(prefix="/api/projects/{project_id}/user-discovery", tags=["user-discovery"])
+
+
+class ApproveBody(BaseModel):
+    override_text: Optional[str] = None
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -58,8 +63,17 @@ def regenerate(
 
 
 @router.post("/proposals/{proposal_id}/approve")
-def approve(project_id: int, proposal_id: int, user: CurrentUser, db: DbSession) -> dict:
+def approve(
+    project_id: int,
+    proposal_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    body: Annotated[ApproveBody, Body()] = ApproveBody(),
+) -> dict:
     try:
-        return answer_review.approve_proposal(db, user.id, project_id, proposal_id)
+        return answer_review.approve_proposal(
+            db, user.id, project_id, proposal_id,
+            override_text=body.override_text,
+        )
     except ReviewError as exc:
         raise _refuse(exc) from None

@@ -2,14 +2,12 @@
 
 import { ContextLibraryWorkspace } from "@/features/context/components/ContextLibraryWorkspace";
 import type { Source } from "@/features/context/types/source";
+import { UserDiscoveryCard } from "@/features/user-discovery/components/UserDiscoveryCard";
 import type { Project } from "@/types/project";
 import { ArtifactsCard } from "./ArtifactsCard";
 import { DiscoveryCard } from "./DiscoveryCard";
-import { ObjectivesCard } from "./ObjectivesCard";
-import { ProblemStatementCard } from "./ProblemStatementCard";
+import { FeaturedDiscoverySection } from "./FeaturedDiscoverySection";
 import { ProjectSummaryCard } from "./ProjectSummaryCard";
-import { StakeholdersCard } from "./StakeholdersCard";
-import { UserDiscoveryCard } from "@/features/user-discovery/components/UserDiscoveryCard";
 
 interface ProjectOverviewProps {
   project: Project;
@@ -22,11 +20,7 @@ export function ProjectOverview({ project, sources }: ProjectOverviewProps) {
     <ContextLibraryWorkspace projectId={project.id} sources={sources}>
       <ProjectSummaryCard project={project} />
       <UserDiscoveryCard projectId={project.id} />
-      <ProblemStatementCard />
-      <div className="grid gap-6 md:grid-cols-2">
-        <ObjectivesCard />
-        <StakeholdersCard />
-      </div>
+      <FeaturedDiscoverySection projectId={project.id} />
       <DiscoveryCard />
       <ArtifactsCard />
     </ContextLibraryWorkspace>

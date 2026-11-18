@@ -16,6 +16,13 @@ export function regenerateCheckpoint(projectId: number, checkpointId: number): P
   });
 }
 
-export function approveProposal(projectId: number, proposalId: number): Promise<ApprovalResult> {
-  return apiRequest<ApprovalResult>(API_PATHS.userDiscovery.approve(projectId, proposalId), { method: "POST" });
+export function approveProposal(
+  projectId: number,
+  proposalId: number,
+  overrideText?: string,
+): Promise<ApprovalResult> {
+  return apiRequest<ApprovalResult>(API_PATHS.userDiscovery.approve(projectId, proposalId), {
+    method: "POST",
+    ...(overrideText !== undefined ? { body: JSON.stringify({ override_text: overrideText }) } : {}),
+  });
 }

@@ -75,6 +75,7 @@ export function useUserDiscovery(projectId: number) {
     startRun: () => perform(() => startUserDiscoveryRun(projectId), true),
     regenerate: (checkpointId: number) =>
       perform(() => regenerateCheckpoint(projectId, checkpointId), true),
-    approve: (proposalId: number) => perform(() => approveProposal(projectId, proposalId), false),
+    approve: (proposalId: number, overrideText?: string) =>
+      perform(() => approveProposal(projectId, proposalId, overrideText), false),
   };
 }

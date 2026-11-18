@@ -22,7 +22,7 @@ export function UserDiscoveryCard({ projectId }: UserDiscoveryCardProps) {
   const approvedCount = cards.filter((c) => c.current_answer?.status === "APPROVED").length;
   const mappingPending = ud.overview?.pending_mapping_chunks ?? 0;
   const running = ud.overview?.running ?? false;
-  const canRun = !!ud.overview && !running && !ud.busy && mappingPending === 0 && cards.some((c) => c.chunk_count > 0);
+  const canRun = !!ud.overview && !running && !ud.busy;
   const selected = cards.find((c) => c.checkpoint.id === openId) ?? null;
 
   return (
