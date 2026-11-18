@@ -173,3 +173,32 @@ export function ChevronDownIcon(props: IconProps) {
     </BaseIcon>
   );
 }
+
+export function InfoIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </BaseIcon>
+  );
+}
+
+export function ChevronUpIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="m18 15-6-6-6 6" />
+    </BaseIcon>
+  );
+}
+
+export function FileTextIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v5h5" />
+      <path d="M9 13h6" />
+      <path d="M9 17h4" />
+    </BaseIcon>
+  );
+}
