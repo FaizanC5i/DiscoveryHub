@@ -38,7 +38,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, true
+from sqlalchemy import func, select, true, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -74,7 +75,8 @@ RUN_REGENERATE = "brd_regenerate"
 RUN_CLARIFY = "brd_clarify"
 OPEN_PROPOSAL_STATUSES = ("PENDING", "NEEDS_CLARIFICATION")
 # A run still "running" after this long is treated as dead (for example the server restarted).
-STALE_RUN_MINUTES = 30
+# A generate run makes up to ~15 agent calls of several minutes each, so this is generous.
+STALE_RUN_MINUTES = 60
 # Calls per mode when the reply cannot be read.
 PARSE_ATTEMPTS = 2
 PREFETCH_WORKERS = 4
@@ -385,6 +387,7 @@ def _new_run(
     run_type: str,
     input_payload: dict,
 ) -> int:
+    _close_stale_runs(db, artifact.id)
     _ensure_no_running_run(db, artifact.id)
     run = AgentRun(
         project_id=artifact.project_id,
@@ -398,8 +401,26 @@ def _new_run(
         project_artifact_section_id=section.id if section else None,
     )
     db.add(run)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # ux_agent_runs_one_running_artifact: another request started a run a moment ago.
+        db.rollback()
+        raise api_error(409, "BRD_RUN_IN_PROGRESS", "The BRD agent is already working on this BRD. Please wait.") from None
     return run.id
+
+
+def _close_stale_runs(db: Session, artifact_id: int) -> None:
+    """Runs left "running" by a stopped server would block every new run; mark them failed."""
+    db.execute(
+        update(AgentRun)
+        .where(
+            AgentRun.project_artifact_id == artifact_id,
+            AgentRun.status == "running",
+            AgentRun.started_at <= utc_now() - timedelta(minutes=STALE_RUN_MINUTES),
+        )
+        .values(status="failed", completed_at=utc_now(), error_message="Stopped before it finished.")
+    )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -620,9 +641,12 @@ def _save_proposal(
 
     if is_content:
         section.status = "PENDING_REVIEW"
-    elif section.status in ("NOT_STARTED", "NEEDS_CLARIFICATION"):
-        # An approved section, or one whose draft waits for review, keeps its status.
-        section.status = "NEEDS_CLARIFICATION"
+    elif questions_only and section.status == "PENDING_REVIEW":
+        pass  # Clarify only adds questions; the draft waiting for review stays open.
+    else:
+        # Any earlier draft was just superseded, so the status follows what the section holds now:
+        # its approved content if it has some, otherwise the open questions.
+        section.status = "APPROVED" if section.current_content else "NEEDS_CLARIFICATION"
     section.updated_at = now
     db.flush()
     return proposal

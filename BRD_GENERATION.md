@@ -35,7 +35,11 @@ approved checkpoint answers ──► BRD agent ──► proposals (one per sec
 
 The agent never writes into a section directly: its output is always a proposal.
 Agent calls run in the background and are logged in `agent_runs`
-(`brd_generate` / `brd_regenerate` / `brd_clarify`). One BRD run per project at a time.
+(`brd_generate` / `brd_regenerate` / `brd_clarify`). One BRD run per project at a time: the database
+enforces it (`ux_agent_runs_one_running_artifact`, migration 015), so two approvals at the same moment
+start one run, and the other is picked up when it ends. A run left "running" for over an hour (server
+stopped) is closed as failed when the next run starts. A generate run with all 19 answers takes about
+10 minutes with the real agent.
 
 ## What the agent receives
 
@@ -121,6 +125,7 @@ BRD_AUTO_REFRESH=true           # regenerate the BRD when a User Discovery answe
 |---|---|
 | `backend/alembic/versions/012_create_brd_artifact_tables.py` | Tables, seed, agent_runs change |
 | `backend/alembic/versions/014_artifact_type_pillars.py` | BRD reads the User Discovery pillar only |
+| `backend/alembic/versions/015_one_running_brd_run.py` | One running BRD run per BRD; status data fix |
 | `backend/app/api/routes/answers.py` | Approving an answer queues `brd_service.refresh_brd` |
 | `backend/app/services/brd_agent_io.py` | Builds the agent input, reads the reply (pure) |
 | `backend/app/services/brd_service.py` | Runs, proposals, approve, edit, versions |
@@ -130,6 +135,8 @@ BRD_AUTO_REFRESH=true           # regenerate the BRD when a User Discovery answe
 
 ## Not done yet
 
+- **The UI is not connected.** `frontend/features/artifact-studio/services/artifact-studio.service.ts` still
+  returns placeholder data and its Generate function does nothing. It must call the endpoints above.
+
 - Word / PDF export of a version.
-- The UI (Artifact Studio) is not connected to these endpoints yet.
 - `is_required` in `artifact_section_checkpoints` is stored but not enforced.

@@ -328,7 +328,14 @@ class AgentRun(Base):
     """One agent call: a mapping batch or a pillar answer run."""
 
     __tablename__ = "agent_runs"
-    __table_args__ = (Index("ix_agent_runs_project_id_status", "project_id", "status"),)
+    __table_args__ = (
+        Index("ix_agent_runs_project_id_status", "project_id", "status"),
+        # Migration 015: at most one running run per BRD.
+        Index(
+            "ux_agent_runs_one_running_artifact", "project_artifact_id", unique=True,
+            mssql_where=text("status = 'running' AND project_artifact_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
