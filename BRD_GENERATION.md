@@ -112,9 +112,13 @@ body with the API call (`backend/app/api/routes/artifact_studio.py`, `services/a
 A section shows the agent's draft waiting for review first (PENDING_REVIEW), else its approved content,
 else the agent's questions (NEEDS_CLARIFICATION).
 
-**The BRD has 5 sections** (migration 016): Business Objectives, Users & Stakeholders, Current State, Scope,
-Functional Requirements. The other 9 are switched off (`artifact_sections.is_active = 0`), not deleted.
-The BRD agent may still write them; they are ignored.
+**The BRD has all 14 sections again** (migration 018; 016 had cut it to 5). The draft editor shows them on one
+scrolling page, like the original BRD tool: each section has Regenerate, Clarify and Edit, shows its text as
+Markdown (lists, tables), and lists the agent's questions with an answer box each. "Submit answers" sends
+the answers with Regenerate; they are saved and reused on every later rewrite. A section can show a draft
+waiting for review and new questions at the same time. Each section also returns `content` (Markdown),
+`isWorking` (the agent is busy with it) and `lastError` (why its last run failed). PUT section accepts
+`{content}` (Markdown) as well as `{bullets}`.
 
 ## BRD API (all need login; other users' projects return 404)
 
@@ -152,7 +156,8 @@ BRD_AUTO_REFRESH=true           # regenerate the BRD when a User Discovery answe
 | `backend/alembic/versions/014_artifact_type_pillars.py` | BRD reads the User Discovery pillar only |
 | `backend/alembic/versions/015_one_running_brd_run.py` | One running BRD run per BRD; status data fix |
 | `backend/app/api/routes/answers.py` | Approving an answer queues `brd_service.refresh_brd` |
-| `backend/alembic/versions/016_artifact_draft_settings.py` | Title / audience / scope; 5 BRD sections |
+| `backend/alembic/versions/016_artifact_draft_settings.py` | Title / audience / scope |
+| `backend/alembic/versions/018_brd_all_sections.py` | All 14 BRD sections on again |
 | `backend/app/services/artifact_readiness.py` | Verified / awaiting review / missing per checkpoint |
 | `backend/app/services/artifact_studio_service.py`, `api/routes/artifact_studio.py` | The screens' API, bullets, versions, export |
 | `backend/app/services/brd_agent_io.py` | Builds the agent input, reads the reply (pure) |
@@ -165,7 +170,6 @@ BRD_AUTO_REFRESH=true           # regenerate the BRD when a User Discovery answe
 
 - The Artifact Studio screens are connected (`artifact-studio.service.ts`). The Document title default still
   comes from the Discovery overview placeholder (`features/discovery/services/discovery.service.ts`).
-- Regenerate / Clarify buttons and an answer box for the questions are not wired in the editor yet.
 
 - PDF export needs `fpdf2` (added to requirements.txt): run `pip install -r requirements.txt`.
 - The BRD agent's prompt still says "uploaded file" in its empty-section message; its owner can reword it.

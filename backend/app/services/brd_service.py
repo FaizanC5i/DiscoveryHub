@@ -752,6 +752,7 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
     ids = [row.id for row in rows]
     # One query each for every section's open proposal and saved clarifications (the database is remote).
     open_proposals: dict[int, ArtifactSectionProposal] = {}
+    latest_by_status: dict[tuple[int, str], ArtifactSectionProposal] = {}
     for proposal in db.scalars(
         select(ArtifactSectionProposal)
         .where(
@@ -761,6 +762,7 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
         .order_by(ArtifactSectionProposal.id)
     ):
         open_proposals[proposal.project_artifact_section_id] = proposal  # newest wins
+        latest_by_status[(proposal.project_artifact_section_id, proposal.status)] = proposal
     clarifications: dict[int, list[ArtifactSectionClarification]] = {}
     for clarification in db.scalars(
         select(ArtifactSectionClarification)
@@ -770,7 +772,9 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
         clarifications.setdefault(clarification.project_artifact_section_id, []).append(clarification)
     sections = [
         _section_dict(
-            row, row.section, feeds.get(row.artifact_section_id, []), open_proposals.get(row.id), clarifications.get(row.id, [])
+            row, row.section, feeds.get(row.artifact_section_id, []), open_proposals.get(row.id), clarifications.get(row.id, []),
+            pending=latest_by_status.get((row.id, "PENDING")),
+            asking=latest_by_status.get((row.id, "NEEDS_CLARIFICATION")),
         )
         for row in rows
     ]
@@ -981,12 +985,24 @@ def _section_after_change(db: Session, section: ProjectArtifactSection) -> dict:
             .order_by(ArtifactSectionClarification.id)
         )
     )
+    def latest(status: str) -> ArtifactSectionProposal | None:
+        return db.scalar(
+            select(ArtifactSectionProposal)
+            .where(
+                ArtifactSectionProposal.project_artifact_section_id == section.id,
+                ArtifactSectionProposal.status == status,
+            )
+            .order_by(ArtifactSectionProposal.id.desc())
+        )
+
     return _section_dict(
         section,
         section.section,
         _feeds_by_section(db, artifact_type_id).get(section.artifact_section_id, []),
         _open_proposal(db, section.id),
         clarifications,
+        pending=latest("PENDING"),
+        asking=latest("NEEDS_CLARIFICATION"),
     )
 
 
@@ -996,7 +1012,14 @@ def _section_dict(
     fed_by: list[str],
     proposal: ArtifactSectionProposal | None,
     clarifications: list[ArtifactSectionClarification],
+    pending: ArtifactSectionProposal | None = None,
+    asking: ArtifactSectionProposal | None = None,
 ) -> dict:
+    """
+    open_proposal: the newest open proposal (draft or questions).
+    pending_draft / open_questions: the newest of each kind, since a section can have a draft
+    waiting for review and, after Clarify, new questions at the same time.
+    """
     return {
         "section_key": template.section_key,
         "title": template.title,
@@ -1018,9 +1041,24 @@ def _section_dict(
             if proposal
             else None
         ),
+        "pending_draft": _proposal_view(pending),
+        "open_questions": _proposal_view(asking),
         "clarifications": [
             {"id": c.id, "question": c.question, "answer": c.answer, "created_at": c.created_at} for c in clarifications
         ],
+    }
+
+
+def _proposal_view(proposal: ArtifactSectionProposal | None) -> dict | None:
+    if proposal is None:
+        return None
+    return {
+        "id": proposal.id,
+        "status": proposal.status,
+        "content": proposal.proposed_content,
+        "missing_reason": proposal.missing_reason,
+        "questions": json.loads(proposal.clarification_questions or "[]"),
+        "created_at": proposal.created_at,
     }
 
 

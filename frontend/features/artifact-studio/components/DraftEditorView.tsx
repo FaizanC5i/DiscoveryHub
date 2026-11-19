@@ -7,10 +7,12 @@ import { badgeClass, cardClass } from "@/features/discovery/utils/class-names";
 import {
   exportArtifactDraft,
   getArtifactDraft,
-  saveDraftSection,
+  clarifyDraftSection,
+  regenerateDraftSection,
+  saveDraftSectionContent,
   saveDraftVersion,
 } from "../services/artifact-studio.service";
-import type { ArtifactCode, ArtifactDraft, ExportOptions } from "../types/artifact-studio.types";
+import type { ArtifactCode, ArtifactDraft, ClarificationAnswer, ExportOptions } from "../types/artifact-studio.types";
 import { DraftExportBar } from "./DraftExportBar";
 import { DraftSectionContent } from "./DraftSectionContent";
 import { DraftSectionNav } from "./DraftSectionNav";
@@ -61,11 +63,28 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
     setReloadKey((k) => k + 1);
   }
 
-  async function handleSaveSection(sectionId: string, bullets: string[]) {
-    const updated = await saveDraftSection(projectId, code, sectionId, bullets);
+  async function handleSaveSection(sectionId: string, content: string) {
+    const updated = await saveDraftSectionContent(projectId, code, sectionId, content);
     setDraft((current) =>
       current ? { ...current, sections: current.sections.map((s) => (s.id === sectionId ? updated : s)) } : current,
     );
+  }
+
+  // The agent works in the background: reload, so the page shows "Generating" and keeps checking.
+  async function handleRegenerate(sectionId: string, answers: ClarificationAnswer[]) {
+    await regenerateDraftSection(projectId, code, sectionId, answers);
+    setReloadKey((k) => k + 1);
+  }
+
+  async function handleClarify(sectionId: string) {
+    await clarifyDraftSection(projectId, code, sectionId);
+    setReloadKey((k) => k + 1);
+  }
+
+  /** Left list: jump to the section on the scrolling page. */
+  function goToSection(sectionId: string) {
+    setActiveSectionId(sectionId);
+    document.getElementById(`section-${sectionId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function handleSaveVersion() {
@@ -125,7 +144,7 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
 
         {/* Sections + document */}
         <div className={`${cardClass} grid grid-cols-1 overflow-hidden bg-(--color-bg-default-secondary) lg:grid-cols-[var(--space-56)_minmax(0,1fr)]`}>
-          <DraftSectionNav sections={draft.sections} activeId={activeSection.id} onSelect={setActiveSectionId} />
+          <DraftSectionNav sections={draft.sections} activeId={activeSection.id} onSelect={goToSection} />
 
           <div className="p-(--space-4) lg:p-(--space-7)">
             <article className={`${cardClass} p-(--space-5) lg:p-(--space-7)`}>
@@ -142,12 +161,20 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
                 <span className={badgeClass.brand}>{draft.status}</span>
               </header>
 
-              <DraftSectionContent
-                key={activeSection.id}
-                section={activeSection}
-                onSave={(bullets) => handleSaveSection(activeSection.id, bullets)}
-                onEditingChange={setIsEditing}
-              />
+              {/* All sections on one scrolling page, as in the original BRD tool. */}
+              <div className="flex flex-col gap-(--space-8)">
+                {draft.sections.map((section) => (
+                  <DraftSectionContent
+                    key={section.id}
+                    section={section}
+                    isBusy={draft.status === "Generating"}
+                    onSave={(content) => handleSaveSection(section.id, content)}
+                    onRegenerate={(answers) => handleRegenerate(section.id, answers)}
+                    onClarify={() => handleClarify(section.id)}
+                    onEditingChange={setIsEditing}
+                  />
+                ))}
+              </div>
             </article>
           </div>
         </div>

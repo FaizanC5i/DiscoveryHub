@@ -142,7 +142,16 @@ def draft(db: Session, owner_id: int, project_id: int, code: str) -> dict:
     artifact = _artifact(db, project_id)
     pillar_ids = brd_service._brd_pillar_ids(db)  # noqa: SLF001 - same package, one source of truth
 
-    sections = [_draft_section(s) for s in brd["sections"]]
+    run = brd["latest_run"]
+    sections = []
+    for s in brd["sections"]:
+        section = _draft_section(s)
+        # The agent is busy with this section (a full generation counts for every section).
+        section["isWorking"] = bool(run and run["status"] == "running" and run["section_key"] in (None, s["section_key"]))
+        section["lastError"] = (
+            run["error_message"] if run and run["status"] == "failed" and run["section_key"] == s["section_key"] else None
+        )
+        sections.append(section)
     ready = artifact_readiness.readiness(db, project_id, pillar_ids)
     current_snapshot = {
         "verified": ready["verified"], "total": ready["total"],
@@ -182,10 +191,13 @@ def draft(db: Session, owner_id: int, project_id: int, code: str) -> dict:
     }
 
 
-def save_section(db: Session, owner_id: int, project_id: int, code: str, section_id: str, bullets: list[str]) -> dict:
-    """PUT /api/projects/{id}/artifacts/{code}/sections/{sectionId}  body {bullets}"""
+def save_section(
+    db: Session, owner_id: int, project_id: int, code: str, section_id: str,
+    bullets: list[str] | None = None, content: str | None = None,
+) -> dict:
+    """PUT /api/projects/{id}/artifacts/{code}/sections/{sectionId}  body {content} (Markdown) or {bullets}"""
     _require_generated(code)
-    content = bullets_to_markdown(bullets)
+    content = (content or "").strip() or bullets_to_markdown(bullets or [])
     if not content:
         raise api_error(422, "EMPTY_CONTENT", "Add at least one bullet point")
     brd_service.edit_section(db, owner_id, project_id, section_id, content)
@@ -396,20 +408,28 @@ def _artifact(db: Session, project_id: int) -> ProjectArtifact | None:
 
 
 def _draft_section(s: dict) -> dict:
-    """One brd_service section -> the editor's DraftSection. A draft waiting for review is shown first."""
-    proposal = s["open_proposal"]
+    """
+    One brd_service section -> the editor's DraftSection.
+    Text: the agent's draft waiting for review first, else the approved content.
+    Questions: the agent's open questions, shown with answer boxes whether or not there is text.
+    `content` is the Markdown (tables, lists); `bullets` is the same text as plain points.
+    """
+    pending = s.get("pending_draft")
+    asking = s.get("open_questions")
     out = {"id": s["section_key"], "number": s["sort_order"], "title": s["title"]}
-    if proposal and proposal["status"] == "PENDING":
-        out.update(status="PENDING_REVIEW", bullets=markdown_to_bullets(proposal["content"]), proposalId=proposal["id"])
+    if pending:
+        out.update(status="PENDING_REVIEW", content=pending["content"], proposalId=pending["id"])
     elif s["content"]:
-        out.update(status=s["status"] if s["status"] != "NEEDS_CLARIFICATION" else "APPROVED",
-                   bullets=markdown_to_bullets(s["content"]))
-    elif proposal and proposal["status"] == "NEEDS_CLARIFICATION":
-        out.update(status="NEEDS_CLARIFICATION", bullets=[],
-                   missingReason=proposal["missing_reason"] or DEFAULT_MISSING_REASON,
-                   clarificationQuestions=proposal["questions"], proposalId=proposal["id"])
+        out.update(status=s["status"] if s["status"] in ("APPROVED", "PENDING_REVIEW", "DRAFT") else "APPROVED",
+                   content=s["content"])
+    elif asking:
+        out.update(status="NEEDS_CLARIFICATION", content="")
     else:
-        out.update(status="NOT_STARTED", bullets=[])
+        out.update(status="NOT_STARTED", content="")
+    out["bullets"] = markdown_to_bullets(out["content"])
+    if asking and asking["questions"]:
+        out["clarificationQuestions"] = asking["questions"]
+        out["missingReason"] = asking["missing_reason"] or (DEFAULT_MISSING_REASON if not out["content"] else "")
     return out
 
 

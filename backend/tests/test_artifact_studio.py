@@ -33,27 +33,36 @@ def test_bullets_round_trip_to_markdown():
 
 
 def _section(**over):
-    base = {"section_key": "scope", "sort_order": 4, "title": "Scope", "status": "NOT_STARTED", "content": None, "open_proposal": None}
+    base = {"section_key": "scope", "sort_order": 4, "title": "Scope", "status": "NOT_STARTED", "content": None,
+            "open_proposal": None, "pending_draft": None, "open_questions": None}
     base.update(over)
     return base
 
 
-def test_a_draft_waiting_for_review_is_shown_first():
-    s = studio._draft_section(_section(
-        status="APPROVED", content="- old",
-        open_proposal={"id": 9, "status": "PENDING", "content": "- new", "missing_reason": None, "questions": []},
-    ))
-    assert s == {"id": "scope", "number": 4, "title": "Scope", "status": "PENDING_REVIEW", "bullets": ["new"], "proposalId": 9}
+DRAFT = {"id": 9, "status": "PENDING", "content": "| A | B |\n| --- | --- |\n| x | y |", "missing_reason": None, "questions": []}
+ASK = {"id": 3, "status": "NEEDS_CLARIFICATION", "content": None, "missing_reason": None, "questions": ["What is in?"]}
 
 
-def test_questions_are_shown_only_when_there_is_no_content():
-    questions = {"id": 3, "status": "NEEDS_CLARIFICATION", "content": None, "missing_reason": None, "questions": ["What is in?"]}
-    empty = studio._draft_section(_section(status="NEEDS_CLARIFICATION", open_proposal=questions))
-    assert empty["status"] == "NEEDS_CLARIFICATION" and empty["bullets"] == []
+def test_a_draft_waiting_for_review_is_shown_first_with_its_markdown():
+    s = studio._draft_section(_section(status="APPROVED", content="- old", pending_draft=DRAFT))
+    assert s["status"] == "PENDING_REVIEW" and s["proposalId"] == 9
+    assert s["content"] == DRAFT["content"] and s["bullets"] == ["x – y"]
+    assert "clarificationQuestions" not in s
+
+
+def test_questions_are_shown_together_with_a_waiting_draft():
+    s = studio._draft_section(_section(pending_draft=DRAFT, open_questions=ASK))
+    assert s["status"] == "PENDING_REVIEW" and s["clarificationQuestions"] == ["What is in?"]
+    assert s["missingReason"] == ""
+
+
+def test_questions_only_and_empty_sections():
+    empty = studio._draft_section(_section(status="NEEDS_CLARIFICATION", open_questions=ASK))
+    assert empty["status"] == "NEEDS_CLARIFICATION" and empty["content"] == "" and empty["bullets"] == []
     assert empty["missingReason"] == studio.DEFAULT_MISSING_REASON
     assert empty["clarificationQuestions"] == ["What is in?"]
 
-    approved = studio._draft_section(_section(status="APPROVED", content="- In: EU", open_proposal=questions))
+    approved = studio._draft_section(_section(status="APPROVED", content="- In: EU", open_questions=ASK))
     assert approved["status"] == "APPROVED" and approved["bullets"] == ["In: EU"]
     assert studio._draft_section(_section())["status"] == "NOT_STARTED"
 
