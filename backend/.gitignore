@@ -14,3 +14,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Templates with placeholders only (safe to commit)
+!.env.example
+
+# Local agent packages (pillar dispatch and BRD outbox — contains client document text). Never commit.
+agent_outbox/

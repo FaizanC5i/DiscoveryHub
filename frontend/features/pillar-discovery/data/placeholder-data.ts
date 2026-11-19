@@ -1,0 +1,215 @@
+/**
+ * PLACEHOLDER DATA for the User Discovery page (matches the design).
+ * Phases 02–05 are collapsed in the design, so their artifacts are sensible
+ * placeholders until the product team confirms them.
+ * Replace with API data when the backend is ready.
+ */
+import type { PillarDiscovery } from "../types/pillar-discovery.types";
+
+export const placeholderUserDiscovery: PillarDiscovery = {
+  pillarId: "USER",
+  name: "User Discovery",
+  description:
+    "People, roles, stakeholders, process and workflow detail. Answer an open question directly, or use a guided design-thinking activity to create the evidence you need.",
+  targetPercent: 80,
+
+  questions: [
+    {
+      id: "Q01",
+      status: "open",
+      priority: "critical",
+      phaseId: "EMPATHIZE",
+      question: "Which stakeholders sponsor, own, approve, or are affected by this project?",
+      missing: "Stakeholder roles and decision ownership.",
+      sources: ["BRD"],
+    },
+    {
+      id: "Q02",
+      status: "open",
+      priority: "critical",
+      phaseId: "DEFINE",
+      question: "How is this work done today, step by step, including handoffs?",
+      missing: "The current workflow and exception handoffs.",
+      sources: ["BRD", "PRD"],
+    },
+    {
+      id: "Q03",
+      status: "open",
+      priority: "critical",
+      phaseId: "DEFINE",
+      question: "What are the biggest pain points users face today?",
+      missing: "Evidence of user frustrations and their impact.",
+      sources: ["BRD"],
+    },
+    {
+      id: "Q04",
+      status: "open",
+      priority: "recommended",
+      phaseId: "IDEATE",
+      question: "What must the solution do for each user group?",
+      missing: "Prioritised needs for each user group.",
+      sources: ["PRD"],
+    },
+    {
+      id: "Q05",
+      status: "answered",
+      priority: "critical",
+      phaseId: "EMPATHIZE",
+      question: "Who uses the system, and what are their roles?",
+      answer: "Three user groups, with goals, daily volumes and frustrations, from the uploaded personas.",
+      sources: ["BRD", "PRD"],
+    },
+  ],
+
+  phases: [
+    {
+      id: "EMPATHIZE",
+      number: 1,
+      name: "Empathize",
+      tagline: "Understand the people behind the project.",
+      description:
+        "Identify sponsors, owners and affected users. Interview representatives, and capture their goals, frustrations and decision rights.",
+      questionIds: ["Q01", "Q05"],
+      artifacts: [
+        {
+          id: "user-personas",
+          title: "User personas",
+          description: "Represent the main user groups, their goals, daily volumes and frustrations.",
+          informs: ["Q05", "Q01"],
+          status: "uploaded",
+          file: { name: "NorthStar_User_Personas_v1.pdf", meta: "3 personas · uploaded Nov 5" },
+        },
+        {
+          id: "empathy-map",
+          title: "Empathy map",
+          description: "Capture what each user group thinks, feels, says and does.",
+          informs: ["Q01", "Q03"],
+          status: "not-started",
+        },
+        {
+          id: "stakeholder-interview-notes",
+          title: "Stakeholder interview notes",
+          description: "Record who sponsors, owns and approves the work, from interviews or transcripts.",
+          informs: ["Q01"],
+          status: "not-started",
+        },
+      ],
+    },
+    {
+      id: "DEFINE",
+      number: 2,
+      name: "Define",
+      tagline: "Make the workflow and core problem explicit.",
+      description:
+        "Map today's workflow step by step, including handoffs, and turn the pain points into a clear problem statement.",
+      questionIds: ["Q02", "Q03"],
+      artifacts: [
+        {
+          id: "current-process-map",
+          title: "Current-state process map",
+          description: "Show each step of today's workflow, who does it, and where work is handed off.",
+          informs: ["Q02"],
+          status: "awaiting-review",
+          file: { name: "Current process.pdf", meta: "uploaded Nov 5 · awaiting review" },
+        },
+        {
+          id: "pain-point-log",
+          title: "Pain point log",
+          description: "List user frustrations with how often they happen and their impact.",
+          informs: ["Q03"],
+          status: "not-started",
+        },
+        {
+          id: "problem-statement",
+          title: "Problem statement",
+          description: "Summarise the core problem in a few sentences everyone can agree on.",
+          informs: ["Q02", "Q03"],
+          status: "not-started",
+        },
+      ],
+    },
+    {
+      id: "IDEATE",
+      number: 3,
+      name: "Ideate",
+      tagline: "Explore solutions before choosing capabilities.",
+      description: "Generate options for each pain point, then shortlist the capabilities worth testing.",
+      questionIds: ["Q04"],
+      artifacts: [
+        {
+          id: "how-might-we",
+          title: "How-might-we list",
+          description: "Reframe each pain point as an opportunity to explore.",
+          informs: ["Q04"],
+          status: "not-started",
+        },
+        {
+          id: "capability-shortlist",
+          title: "Capability shortlist",
+          description: "Rank the candidate capabilities by value and effort.",
+          informs: ["Q04"],
+          status: "not-started",
+        },
+      ],
+    },
+    {
+      id: "PROTOTYPE",
+      number: 4,
+      name: "Prototype",
+      tagline: "Make ideas tangible enough to discuss.",
+      description: "Sketch the key screens and flows so users can react to something concrete.",
+      questionIds: ["Q04"],
+      artifacts: [
+        {
+          id: "wireframes",
+          title: "Low-fidelity wireframes",
+          description: "Rough screens for the most important user tasks.",
+          informs: ["Q04"],
+          status: "not-started",
+        },
+      ],
+    },
+    {
+      id: "TEST",
+      number: 5,
+      name: "Test",
+      tagline: "Validate assumptions and capture learning.",
+      description: "Put the prototype in front of users and record what works and what does not.",
+      questionIds: ["Q03", "Q04"],
+      artifacts: [
+        {
+          id: "usability-findings",
+          title: "Usability test findings",
+          description: "What users tried, where they struggled, and what they said.",
+          informs: ["Q03", "Q04"],
+          status: "not-started",
+        },
+      ],
+    },
+  ],
+
+  relevantSources: [
+    {
+      id: "src-personas",
+      title: "NorthStar_User_Personas_v1.pdf",
+      pillars: ["USER"],
+      phaseName: "Empathize",
+      status: "Uploaded",
+      createdBy: "Alex Kim",
+    },
+    {
+      id: "src-current-process",
+      title: "Current process.pdf",
+      pillars: ["USER", "TECH"],
+      status: "Awaiting review",
+      createdBy: "Alex Kim",
+    },
+    {
+      id: "src-brief",
+      title: "Project brief (auto-synthesized).md",
+      pillars: ["USER", "DATA", "TECH"],
+      status: "Auto-synthesized",
+      createdBy: "Discovery Hub",
+    },
+  ],
+};
