@@ -118,7 +118,9 @@ class Settings(BaseSettings):
     brd_agent5i_password: str = ""
     brd_timeout_seconds: int = 300
     # Regenerate the BRD in the background whenever a User Discovery answer is approved.
-    brd_auto_refresh: bool = True
+    # Off: the BRD changes only when the user clicks Generate, Refresh, Regenerate or Clarify
+    # (every automatic run costs a full agent call). On: regenerate after each approved answer.
+    brd_auto_refresh: bool = False
 
     @field_validator("jwt_secret_key")
     @classmethod

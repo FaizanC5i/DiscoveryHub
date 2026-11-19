@@ -186,6 +186,8 @@ def draft(db: Session, owner_id: int, project_id: int, code: str) -> dict:
         "audience": artifact.audience if artifact else None,
         "scope": artifact.scope if artifact else None,
         "isOutdated": brd["is_outdated"],
+        # Answers approved since the BRD was last generated (shown next to the Refresh button).
+        "newAnswerCount": brd_service.answers_approved_since(db, project_id, brd["answers_as_of"]) if brd["is_outdated"] else 0,
         "latestRun": brd["latest_run"],
     }
 
@@ -201,6 +203,12 @@ def save_section(
         raise api_error(422, "EMPTY_CONTENT", "Add at least one bullet point")
     brd_service.edit_section(db, owner_id, project_id, section_id, content)
     return _one_section(db, owner_id, project_id, section_id)
+
+
+def refresh(db: Session, owner_id: int, project_id: int, code: str) -> int:
+    """POST /api/projects/{id}/artifacts/{code}/refresh: rewrite the BRD from all approved answers + current text."""
+    _require_generated(code)
+    return brd_service.start_refresh(db, owner_id, project_id)
 
 
 def regenerate_section(db: Session, owner_id: int, project_id: int, code: str, section_id: str, answers: list[dict]) -> int:

@@ -65,6 +65,15 @@ export async function saveDraftSection(
 }
 
 /**
+ * Refresh: rewrite the whole draft from all approved answers (old and newly approved), updating
+ * its current text. Runs in the background; the new text arrives as drafts to review.
+ * Backend: POST /api/projects/{projectId}/artifacts/{code}/refresh
+ */
+export async function refreshArtifactDraft(projectId: string, code: ArtifactCode): Promise<void> {
+  await apiRequest<{ agentRunId: number }>(`${artifactPath(projectId, code)}/refresh`, { method: "POST" });
+}
+
+/**
  * Save the section's Markdown text (from the Edit box). It becomes the section's approved content.
  * Backend: PUT /api/projects/{projectId}/artifacts/{code}/sections/{sectionId}  body: { content }
  */

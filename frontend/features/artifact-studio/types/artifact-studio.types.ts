@@ -117,6 +117,10 @@ export interface ArtifactDraft {
   snapshot: DraftSnapshot;
   versions: DraftVersion[];
   sections: DraftSection[];
+  /** An answer was approved after this draft was generated: Refresh would use it. */
+  isOutdated?: boolean;
+  /** How many answers were approved since this draft was generated. */
+  newAnswerCount?: number;
 }
 
 export type ExportFormat = "md" | "docx" | "pdf";

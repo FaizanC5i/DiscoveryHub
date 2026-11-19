@@ -5,12 +5,13 @@ answers**: `project_checkpoint_answers` rows with `approved_at` set, for the che
 Answers of other pillars are not sent (`artifact_type_pillars`: BRD → USER). It does not read uploaded files.
 Everything else works like the stand-alone BRD app: generate, clarify, regenerate, edit, approve.
 
-**The BRD keeps itself up to date.** When a User Discovery answer is approved
-(`POST /api/projects/{id}/user-discovery/proposals/{pid}/approve`), the BRD is regenerated in the
-background (`brd_service.refresh_brd`). The first approved answer creates the BRD. Answers approved while
-a BRD run is busy are picked up by one more run when it ends. The new text arrives as proposals, so
-approved BRD content is never overwritten. `GET .../brd` returns `is_outdated` and `answers_as_of`.
-Turn it off with `BRD_AUTO_REFRESH=false`.
+**Refresh button.** The draft editor shows how many answers were approved since the BRD was generated
+(`isOutdated`, `newAnswerCount`) and a **Refresh** button (`POST .../artifacts/BRD/refresh`). Refresh is one agent
+call with ALL approved User Discovery answers (old and new), the saved clarification answers and the **current
+BRD text**, so the agent updates the BRD instead of starting again. New text arrives as drafts; a section the agent
+cannot update keeps its text and gets questions. The current content stays until "Save new version".
+Automatic regeneration after each approval is **off** by default (`BRD_AUTO_REFRESH=false`) to save agent tokens;
+set it to true to turn it back on.
 
 ## Flow
 

@@ -74,6 +74,7 @@ BRD_AGENT_CODE = "BRD_AGENT"
 RUN_GENERATE = "brd_generate"
 RUN_REGENERATE = "brd_regenerate"
 RUN_CLARIFY = "brd_clarify"
+TRIGGER_REFRESH = "refresh"
 OPEN_PROPOSAL_STATUSES = ("PENDING", "NEEDS_CLARIFICATION")
 # A run still "running" after this long is treated as dead (for example the server restarted).
 # A generate run makes up to ~15 agent calls of several minutes each, so this is generous.
@@ -350,6 +351,21 @@ def start_generate(db: Session, owner_id: int, project_id: int, settings: dict |
     return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL})
 
 
+def start_refresh(db: Session, owner_id: int, project_id: int) -> int:
+    """
+    Refresh: rewrite the whole BRD from ALL approved User Discovery answers (old and newly approved),
+    sending the current BRD text with them so the agent updates it instead of starting again.
+    The new text arrives as drafts; the current content stays until "Save new version".
+    """
+    _owned_project(db, owner_id, project_id)
+    if not approved_answers(db, project_id):
+        raise api_error(
+            409, "NO_APPROVED_ANSWERS", "The BRD is written from approved checkpoint answers. None are approved yet."
+        )
+    artifact = _get_or_create_brd(db, project_id, owner_id)
+    return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL, "trigger": TRIGGER_REFRESH})
+
+
 def start_regenerate(
     db: Session, owner_id: int, project_id: int, section_key: str, answers: list[dict] | None = None
 ) -> int:
@@ -522,8 +538,12 @@ def _run_generate(db: Session, run: AgentRun) -> None:
     if not answers:
         raise BrdRunError("No approved User Discovery answers yet.")
     as_of = latest_approval(db, run.project_id)
-    source = _settings_text(db, run) + io.build_source_text(answers) + _all_clarifications_text(db, sections)
     payload = json.loads(run.input_payload or "{}")
+    is_refresh = payload.get("trigger") == TRIGGER_REFRESH
+    source = _settings_text(db, run) + io.build_source_text(answers) + _all_clarifications_text(db, sections)
+    current_text = _current_brd_text(db, sections) if is_refresh else {}
+    if current_text:
+        source += _current_brd_block(sections, current_text)
     payload.update(
         answers_as_of=as_of.isoformat() if as_of else None,
         checkpoint_codes=[a["code"] for a in answers],
@@ -534,7 +554,8 @@ def _run_generate(db: Session, run: AgentRun) -> None:
     db.commit()  # release the connection while the agent works
 
     result, calls = _call_and_parse(io.build_agent_input(source, io.MODE_GENERATE_ALL), keys, io.MODE_GENERATE_ALL, "")
-    calls += _prefetch_questions(source, result, keys)
+    if not is_refresh:  # a refresh saves tokens: questions come with Clarify when needed
+        calls += _prefetch_questions(source, result, keys)
 
     now = utc_now()
     agent_id = _brd_agent_id(db)
@@ -542,10 +563,61 @@ def _run_generate(db: Session, run: AgentRun) -> None:
         item = result["sections"][section.section.section_key]
         if item["status"] == "insufficient" and not item["questions"]:
             item["questions"] = _fallback_questions(section.section)
-        _save_proposal(db, run, section, item, agent_id, now)
+        # On a refresh, a section that already has text keeps it when the agent only has questions.
+        keep_text = is_refresh and item["status"] == "insufficient" and section.id in current_text
+        _save_proposal(db, run, section, item, agent_id, now, questions_only=keep_text)
     _mark_draft(db.get(ProjectArtifact, run.project_artifact_id), now)
     _succeed(run, result, calls, now)
     db.commit()
+
+
+def _current_brd_text(db: Session, sections: list[ProjectArtifactSection]) -> dict[int, str]:
+    """What each section shows now: its draft waiting for review, else its current content."""
+    drafts: dict[int, str] = {}
+    for proposal in db.scalars(
+        select(ArtifactSectionProposal)
+        .where(
+            ArtifactSectionProposal.project_artifact_section_id.in_([s.id for s in sections]),
+            ArtifactSectionProposal.status == "PENDING",
+        )
+        .order_by(ArtifactSectionProposal.id)
+    ):
+        if proposal.proposed_content:
+            drafts[proposal.project_artifact_section_id] = proposal.proposed_content
+    return {
+        s.id: drafts.get(s.id) or s.current_content
+        for s in sections
+        if (drafts.get(s.id) or s.current_content or "").strip()
+    }
+
+
+def _current_brd_block(sections: list[ProjectArtifactSection], text: dict[int, str]) -> str:
+    blocks = [
+        f"--- CURRENT SECTION {s.section.section_key} ({s.section.title}) ---\n{text[s.id].strip()}"
+        for s in sections
+        if s.id in text
+    ]
+    return (
+        "\n\nCURRENT BRD (written earlier from older answers. Update it with the approved answers above: keep what "
+        "is still true, add what is new, and remove what the answers now contradict.)\n\n" + "\n\n".join(blocks)
+    )
+
+
+def answers_approved_since(db: Session, project_id: int, since) -> int:
+    """How many BRD input answers were approved after `since` (all approved ones when since is None)."""
+    query = (
+        select(func.count())
+        .select_from(ProjectCheckpointAnswer)
+        .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
+        .where(
+            ProjectCheckpointAnswer.project_id == project_id,
+            ProjectCheckpointAnswer.approved_at.is_not(None),
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
+        )
+    )
+    if since is not None:
+        query = query.where(ProjectCheckpointAnswer.approved_at > since)
+    return db.scalar(query) or 0
 
 
 def _settings_text(db: Session, run: AgentRun) -> str:

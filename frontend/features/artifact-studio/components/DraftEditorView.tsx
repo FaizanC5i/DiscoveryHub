@@ -8,6 +8,7 @@ import {
   exportArtifactDraft,
   getArtifactDraft,
   clarifyDraftSection,
+  refreshArtifactDraft,
   regenerateDraftSection,
   saveDraftSectionContent,
   saveDraftVersion,
@@ -35,6 +36,8 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSavingVersion, setIsSavingVersion] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +82,20 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
   async function handleClarify(sectionId: string) {
     await clarifyDraftSection(projectId, code, sectionId);
     setReloadKey((k) => k + 1);
+  }
+
+  /** Refresh: the agent rewrites the draft from all approved answers, old and new. */
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    setRefreshError(null);
+    try {
+      await refreshArtifactDraft(projectId, code);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setRefreshError(e instanceof Error ? e.message : "Could not refresh the draft.");
+    } finally {
+      setIsRefreshing(false);
+    }
   }
 
   /** Left list: jump to the section on the scrolling page. */
@@ -158,6 +175,30 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
                 </p>
                 <span className={badgeClass.brand}>{draft.status}</span>
               </header>
+
+              {/* Refresh: use the answers approved since this draft was generated. */}
+              <div className="mb-(--space-6) flex flex-wrap items-center justify-between gap-(--space-3) rounded-(--radius-md) border border-(--color-border-default-disabled) bg-(--color-bg-default-secondary) px-(--space-4) py-(--space-3)">
+                <p className="m-0 font-(family-name:--font-family-secondary) text-(length:--font-size-body-medium) leading-(--line-height-body-medium)">
+                  {draft.status === "Generating"
+                    ? "The agent is updating this draft…"
+                    : draft.isOutdated
+                      ? `${draft.newAnswerCount ?? 0} answer${draft.newAnswerCount === 1 ? " was" : "s were"} approved since this draft was generated. Refresh to include ${draft.newAnswerCount === 1 ? "it" : "them"}.`
+                      : "This draft uses all approved answers."}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleRefresh()}
+                  disabled={isRefreshing || draft.status === "Generating"}
+                  className="inline-flex cursor-pointer items-center rounded-(--radius-md) border border-transparent bg-(--color-bg-brand-primary) px-(--space-4) py-(--space-2) text-(length:--font-size-body-medium) leading-(--line-height-body-medium) font-semibold text-(--color-text-default-inverse) hover:bg-(--color-bg-brand-secondary) disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isRefreshing ? "Refreshing…" : "Refresh"}
+                </button>
+                {refreshError && (
+                  <p role="alert" className="m-0 w-full text-(length:--font-size-body-small) leading-(--line-height-body-small) text-(--color-red-700)">
+                    {refreshError}
+                  </p>
+                )}
+              </div>
 
               {/* All sections on one scrolling page, as in the original BRD tool. */}
               <div className="flex flex-col gap-(--space-12)">

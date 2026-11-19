@@ -58,6 +58,14 @@ def generate(project_id: int, code: Code, body: DraftConfig, background: Backgro
     return {"agentRunId": run_id}
 
 
+@router.post("/artifacts/{code}/refresh", status_code=status.HTTP_202_ACCEPTED)
+def refresh(project_id: int, code: Code, background: BackgroundTasks, user: CurrentUser, db: DbSession) -> dict:
+    """Rewrite the whole BRD from all approved answers (old and new), updating its current text."""
+    run_id = studio.refresh(db, user.id, project_id, code)
+    background.add_task(brd_service.run_brd_job, run_id)
+    return {"agentRunId": run_id}
+
+
 @router.get("/artifacts/{code}")
 def draft(project_id: int, code: Code, user: CurrentUser, db: DbSession) -> dict:
     return studio.draft(db, user.id, project_id, code)
