@@ -162,7 +162,7 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
               </header>
 
               {/* All sections on one scrolling page, as in the original BRD tool. */}
-              <div className="flex flex-col gap-(--space-8)">
+              <div className="flex flex-col gap-(--space-12)">
                 {draft.sections.map((section) => (
                   <DraftSectionContent
                     key={section.id}

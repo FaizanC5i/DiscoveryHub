@@ -5,6 +5,7 @@ import { badgeClass } from "@/features/discovery/utils/class-names";
 import { MarkdownPreview } from "@/features/mom-assistant/components/MarkdownPreview";
 import type { ClarificationAnswer, DraftSection } from "../types/artifact-studio.types";
 import { SECTION_STATUS, sectionNumber } from "../utils/section-status";
+import { ClarifyDialog } from "./ClarifyDialog";
 
 const actionClass =
   "inline-flex cursor-pointer items-center rounded-(--radius-md) border border-(--color-border-default-disabled) " +
@@ -35,9 +36,10 @@ interface DraftSectionContentProps {
 }
 
 /**
- * One section of the draft: title, Regenerate / Clarify / Edit, its text, and the agent's
- * questions with an answer box each. Answers are sent with Regenerate, so the agent rewrites the
- * section with them; they are saved and reused on every later rewrite.
+ * One section of the draft: title, Regenerate / Clarify / Edit, and its text.
+ * Regenerate: the agent rewrites the section (saved answers are reused).
+ * Clarify: a dialog with the agent's questions (fetched first if there are none), an answer box
+ * each, and Generate, which sends the answers to the agent to rewrite the section.
  */
 export function DraftSectionContent({
   section,
@@ -49,14 +51,21 @@ export function DraftSectionContent({
 }: DraftSectionContentProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [text, setText] = useState("");
-  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [isSending, setIsSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [isClarifyOpen, setIsClarifyOpen] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  /** Questions shown when we asked the agent for new ones; cleared when different ones arrive. */
+  const [waitingFrom, setWaitingFrom] = useState<string | null>(null);
 
   const content = section.content ?? section.bullets.map((b) => `- ${b}`).join("\n");
   const questions = section.clarificationQuestions ?? [];
   const actionsDisabled = isBusy || isSending || Boolean(section.isWorking);
   const status = SECTION_STATUS[section.status];
+  const questionsKey = questions.join(" | ");
+  // Waiting for new questions until different ones arrive, or the run ends with an error.
+  const isWaitingForQuestions = waitingFrom !== null && questionsKey === waitingFrom && !section.lastError;
+  const isPreparing = isWaitingForQuestions || (Boolean(section.isWorking) && questions.length === 0);
 
   function startEditing() {
     setText(content);
@@ -83,22 +92,42 @@ export function DraftSectionContent({
     }
   }
 
-  function submitAnswers() {
-    const filled = questions
-      .filter((q) => answers[q]?.trim())
-      .map((q) => ({ question: q, answer: answers[q]!.trim() }));
-    if (filled.length === 0) {
-      setNotice("Type an answer to at least one question first.");
-      return;
+  async function askForQuestions() {
+    setDialogError(null);
+    setWaitingFrom(questionsKey);
+    try {
+      await onClarify();
+    } catch (e) {
+      setWaitingFrom(null);
+      setDialogError(e instanceof Error ? e.message : "Could not ask the agent for questions.");
     }
-    void run(() => onRegenerate(filled), () => setAnswers({}));
+  }
+
+  function openClarify() {
+    setNotice(null);
+    setDialogError(null);
+    setIsClarifyOpen(true);
+    if (questions.length === 0 && !section.isWorking) void askForQuestions();
+  }
+
+  async function generateWithAnswers(answers: ClarificationAnswer[]) {
+    setIsSending(true);
+    setDialogError(null);
+    try {
+      await onRegenerate(answers);
+      setIsClarifyOpen(false);
+    } catch (e) {
+      setDialogError(e instanceof Error ? e.message : "Could not send the answers.");
+    } finally {
+      setIsSending(false);
+    }
   }
 
   return (
     <section
       id={`section-${section.id}`}
       aria-labelledby={`section-${section.id}-title`}
-      className="scroll-mt-(--space-8) border-0 border-l-2 border-(--color-border-brand-primary) pl-(--space-5)"
+      className="scroll-mt-(--space-10) border-0 border-l-2 border-(--color-border-brand-primary) pl-(--space-5)"
     >
       <div className="mb-(--space-4) flex flex-wrap items-center justify-between gap-(--space-3)">
         <div className="flex flex-wrap items-center gap-(--space-3)">
@@ -115,7 +144,7 @@ export function DraftSectionContent({
             <button type="button" disabled={actionsDisabled} onClick={() => void run(() => onRegenerate([]))} className={actionClass}>
               Regenerate
             </button>
-            <button type="button" disabled={actionsDisabled} onClick={() => void run(onClarify)} className={actionClass}>
+            <button type="button" disabled={isBusy || isSending} onClick={openClarify} className={actionClass}>
               Clarify
             </button>
             <button type="button" disabled={actionsDisabled} onClick={startEditing} className={actionClass}>
@@ -171,44 +200,35 @@ export function DraftSectionContent({
               </span>
             </div>
           </>
-        ) : questions.length === 0 ? (
-          <p className={`${noteClass} text-(--color-text-default-subtle)`}>
-            No content yet. Click Regenerate to write it, or Clarify to get questions.
-          </p>
-        ) : null}
-
-        {!isEditing && questions.length > 0 && (
-          <div className="flex flex-col gap-(--space-3) rounded-(--radius-md) border border-(--color-border-default-disabled) bg-(--color-bg-default-secondary) p-(--space-4) font-(family-name:--font-family-secondary)">
-            {section.missingReason && (
-              <p className="m-0 text-(length:--font-size-body-medium) leading-(--line-height-body-medium) text-(--color-text-default-subtle)">
-                {section.missingReason}
-              </p>
-            )}
-            <p className="m-0 font-semibold">Questions to answer</p>
-            {questions.map((q, i) => (
-              <div key={q} className="flex flex-col gap-(--space-1)">
-                <label htmlFor={`answer-${section.id}-${i}`} className="text-(length:--font-size-body-medium) leading-(--line-height-body-medium)">
-                  {i + 1}. {q}
-                </label>
-                <textarea
-                  id={`answer-${section.id}-${i}`}
-                  value={answers[q] ?? ""}
-                  onChange={(e) => setAnswers((current) => ({ ...current, [q]: e.target.value }))}
-                  placeholder="Your answer…"
-                  rows={2}
-                  disabled={actionsDisabled}
-                  className={fieldClass}
-                />
-              </div>
-            ))}
-            <div>
-              <button type="button" disabled={actionsDisabled} onClick={submitAnswers} className={primaryClass}>
-                {isSending ? "Sending…" : "Submit answers"}
-              </button>
-            </div>
+        ) : (
+          <div className="flex flex-col gap-(--space-1)">
+            <p className="m-0 text-(length:--font-size-body-large) leading-(--line-height-body-large) text-(--color-text-default-subtle)">
+              No context available.
+            </p>
+            <p className={`${noteClass} text-(--color-text-default-subtle)`}>
+              Click Clarify to answer the agent&apos;s questions, or Regenerate to try again.
+            </p>
           </div>
         )}
+        {!isEditing && content.trim() && questions.length > 0 && (
+          <p className={`${noteClass} text-(--color-text-brand-primary)`}>
+            The agent has questions for this section. Click Clarify to answer them.
+          </p>
+        )}
       </div>
+
+      <ClarifyDialog
+        open={isClarifyOpen}
+        sectionTitle={section.title}
+        questions={questions}
+        missingReason={section.missingReason}
+        isPreparing={isPreparing}
+        isSending={isSending}
+        error={dialogError ?? (section.lastError && !isPreparing ? section.lastError : null)}
+        onGenerate={(answers) => void generateWithAnswers(answers)}
+        onNewQuestions={() => void askForQuestions()}
+        onClose={() => setIsClarifyOpen(false)}
+      />
     </section>
   );
 }
