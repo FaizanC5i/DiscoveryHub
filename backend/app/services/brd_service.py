@@ -860,61 +860,111 @@ def reject_proposal(db: Session, owner_id: int, project_id: int, proposal_id: in
     return _section_after_change(db, section)
 
 
-def approve_brd(db: Session, owner_id: int, project_id: int) -> dict:
-    """Freeze the current content of every section as the next version."""
+def save_new_version(db: Session, owner_id: int, project_id: int, approve: bool = False) -> dict:
+    """
+    Save the BRD as a new version. Like the checkpoint answers, the CURRENT version always lives in
+    project_artifact_sections and project_artifact_versions holds only OLDER versions:
+    1. the version being replaced (current content, number current_version) is copied to the
+       versions table, with who saved it and when;
+    2. every draft waiting for review becomes its section's current content;
+    3. current_version goes up by one.
+    approve=True also marks the BRD APPROVED (the "Approve BRD" action).
+    """
     _owned_project(db, owner_id, project_id)
     artifact = _find_brd(db, project_id, _brd_type(db).id)
     if artifact is None:
         raise api_error(404, "BRD_NOT_FOUND", "This project has no BRD yet")
     rows = _section_rows(db, artifact.id)
-    if not any(row.status == "APPROVED" and row.current_content for row in rows):
-        raise api_error(409, "NOTHING_APPROVED", "Approve at least one section before approving the BRD")
-    now = utc_now()
-    snapshot = [
-        {
-            "section_key": row.section.section_key,
-            "title": row.section.title,
-            "sort_order": row.section.sort_order,
-            "status": row.status,
-            "content": row.current_content,
-        }
-        for row in rows
-    ]
-    version_number = artifact.current_version + 1
-    db.add(
-        ProjectArtifactVersion(
-            project_artifact_id=artifact.id,
-            version_number=version_number,
-            snapshot=json.dumps(snapshot, ensure_ascii=False),
-            approved_by=owner_id,
-            approved_at=now,
+    drafts: dict[int, ArtifactSectionProposal] = {}
+    for proposal in db.scalars(
+        select(ArtifactSectionProposal)
+        .where(
+            ArtifactSectionProposal.project_artifact_section_id.in_([row.id for row in rows]),
+            ArtifactSectionProposal.status == "PENDING",
         )
-    )
-    artifact.current_version = version_number
-    artifact.status = "APPROVED"
+        .order_by(ArtifactSectionProposal.id)
+    ):
+        if proposal.proposed_content:
+            drafts[proposal.project_artifact_section_id] = proposal  # newest wins
+    if not drafts and not any(row.current_content for row in rows):
+        raise api_error(409, "NOTHING_TO_SAVE", "Generate the BRD before saving a version")
+
+    now = utc_now()
+    # 1. The version being replaced goes to the versions table (it holds older versions only).
+    if artifact.current_version >= 1:
+        already_kept = db.scalar(
+            select(ProjectArtifactVersion.id).where(
+                ProjectArtifactVersion.project_artifact_id == artifact.id,
+                ProjectArtifactVersion.version_number == artifact.current_version,
+            )
+        )
+        if already_kept is None:
+            db.add(
+                ProjectArtifactVersion(
+                    project_artifact_id=artifact.id,
+                    version_number=artifact.current_version,
+                    snapshot=json.dumps(_current_snapshot(rows), ensure_ascii=False),
+                    approved_by=artifact.approved_by or owner_id,
+                    approved_at=artifact.approved_at or artifact.updated_at or now,
+                )
+            )
+    # 2. The drafts on screen become the current content.
+    for row in rows:
+        draft = drafts.get(row.id)
+        if draft is not None:
+            draft.status = "APPROVED"
+            draft.reviewed_by = owner_id
+            draft.reviewed_at = now
+            _approve_content(row, draft.proposed_content, "AGENT", owner_id, now)
+    # 3. The new current version: who saved it and when.
+    artifact.current_version += 1
     artifact.approved_by = owner_id
     artifact.approved_at = now
     artifact.updated_at = now
+    if approve:
+        artifact.status = "APPROVED"
     db.commit()
-    return {"version_number": version_number, "approved_at": now}
+    return {"version_number": artifact.current_version, "approved_at": now}
+
+
+def approve_brd(db: Session, owner_id: int, project_id: int) -> dict:
+    """Approve the BRD: save it as a new version and mark it APPROVED."""
+    return save_new_version(db, owner_id, project_id, approve=True)
 
 
 def list_versions(db: Session, owner_id: int, project_id: int) -> list[dict]:
+    """The current version (from the sections) first, then the older ones (from the versions table)."""
     _owned_project(db, owner_id, project_id)
     artifact = _find_brd(db, project_id, _brd_type(db).id)
     if artifact is None:
         return []
-    rows = db.scalars(
+    out = []
+    if artifact.current_version >= 1:
+        out.append({"version_number": artifact.current_version, "approved_by": artifact.approved_by,
+                    "approved_at": artifact.approved_at or artifact.updated_at})
+    for v in db.scalars(
         select(ProjectArtifactVersion)
-        .where(ProjectArtifactVersion.project_artifact_id == artifact.id)
+        .where(
+            ProjectArtifactVersion.project_artifact_id == artifact.id,
+            ProjectArtifactVersion.version_number < artifact.current_version,
+        )
         .order_by(ProjectArtifactVersion.version_number.desc())
-    )
-    return [{"version_number": v.version_number, "approved_by": v.approved_by, "approved_at": v.approved_at} for v in rows]
+    ):
+        out.append({"version_number": v.version_number, "approved_by": v.approved_by, "approved_at": v.approved_at})
+    return out
 
 
 def get_version(db: Session, owner_id: int, project_id: int, version_number: int) -> dict:
+    """The current version is read from the sections; older ones from the versions table."""
     _owned_project(db, owner_id, project_id)
     artifact = _find_brd(db, project_id, _brd_type(db).id)
+    if artifact is not None and version_number == artifact.current_version and version_number >= 1:
+        return {
+            "version_number": version_number,
+            "approved_by": artifact.approved_by,
+            "approved_at": artifact.approved_at or artifact.updated_at,
+            "sections": _current_snapshot(_section_rows(db, artifact.id)),
+        }
     version = None
     if artifact is not None:
         version = db.scalar(
@@ -931,6 +981,19 @@ def get_version(db: Session, owner_id: int, project_id: int, version_number: int
         "approved_at": version.approved_at,
         "sections": json.loads(version.snapshot),
     }
+
+
+def _current_snapshot(rows: list[ProjectArtifactSection]) -> list[dict]:
+    return [
+        {
+            "section_key": row.section.section_key,
+            "title": row.section.title,
+            "sort_order": row.section.sort_order,
+            "status": row.status,
+            "content": row.current_content,
+        }
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------------------------

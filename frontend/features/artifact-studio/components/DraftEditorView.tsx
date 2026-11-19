@@ -91,15 +91,13 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
     if (!draft) return;
     setIsSavingVersion(true);
     const currentNumber = draft.versions.find((v) => v.isCurrent)?.number ?? 0;
-    const newNumber = await saveDraftVersion(projectId, code, currentNumber);
-    setDraft({
-      ...draft,
-      versions: [
-        ...draft.versions.map((v) => ({ ...v, isCurrent: false })),
-        { number: newNumber, label: "Just now", isCurrent: true },
-      ],
-    });
-    setIsSavingVersion(false);
+    try {
+      await saveDraftVersion(projectId, code, currentNumber);
+      // The drafts became the current content: reload to show the new statuses and version list.
+      setReloadKey((k) => k + 1);
+    } finally {
+      setIsSavingVersion(false);
+    }
   }
 
   async function handleExport(options: ExportOptions) {

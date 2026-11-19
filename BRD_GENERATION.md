@@ -80,7 +80,7 @@ The agent's prompt on Agent5i still talks about an "uploaded file"; its owner ma
 | `project_artifact_sections` | The BRD's 14 sections: approved content, status, `AGENT` or `USER` |
 | `artifact_section_proposals` | Agent output: `PENDING` (content) or `NEEDS_CLARIFICATION` (reason + questions) |
 | `artifact_section_clarifications` | The user's answers to the questions, reused on every regenerate |
-| `project_artifact_versions` | JSON snapshot of each approved BRD |
+| `project_artifact_versions` | **Older** BRD versions only (JSON snapshot). The current version is the content in `project_artifact_sections` |
 | `agent_runs` (changed) | + `project_artifact_id`, `project_artifact_section_id`; `run_type` also allows the 3 BRD values |
 | `agents` (new row) | `BRD_AGENT` |
 
@@ -104,7 +104,7 @@ body with the API call (`backend/app/api/routes/artifact_studio.py`, `services/a
 | Draft editor | GET `/api/projects/{id}/artifacts/BRD` | `ArtifactDraft`: 5 sections as bullets, status, snapshot banner, versions. Extra: `audience`, `scope`, `isOutdated`, `latestRun`, `proposalId` per section |
 | Edit section | PUT `/api/projects/{id}/artifacts/BRD/sections/{sectionId}` body `{bullets}` | `DraftSection` |
 | Regenerate / Clarify | POST `.../sections/{sectionId}/regenerate` (body optional `{answers:[{question,answer}]}`) and `.../clarify` | 202 `{agentRunId}` |
-| Save new version | POST `/api/projects/{id}/artifacts/BRD/versions` | `{versionNumber, label}` |
+| Save new version | POST `/api/projects/{id}/artifacts/BRD/versions` | `{versionNumber, label}`. The previous version moves to `project_artifact_versions`; the drafts on screen become the current content |
 | Export | GET `/api/projects/{id}/artifacts/BRD/export?format=md\|docx\|pdf&sources=true&questions=true` | the file |
 
 `sectionId` is the section key (`business_objectives`, `users_stakeholders`, `current_state`, `scope`,

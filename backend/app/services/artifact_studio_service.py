@@ -20,7 +20,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import api_error
-from app.core.time import utc_now
 from app.db.models import (
     AgentRun,
     ArtifactType,
@@ -215,30 +214,14 @@ def clarify_section(db: Session, owner_id: int, project_id: int, code: str, sect
 
 
 def save_version(db: Session, owner_id: int, project_id: int, code: str) -> dict:
-    """POST /api/projects/{id}/artifacts/{code}/versions -> the new version number. Freezes what the editor shows."""
-    current = draft(db, owner_id, project_id, code)
-    artifact = _artifact(db, project_id)
-    if artifact is None or not any(s["bullets"] for s in current["sections"]):
-        raise api_error(409, "NOTHING_TO_SAVE", "Generate the draft before saving a version")
-    number = artifact.current_version + 1
-    now = utc_now()
-    snapshot = {
-        "title": current["title"],
-        "audience": current["audience"],
-        "scope": current["scope"],
-        "sections": [
-            {k: s.get(k) for k in ("id", "number", "title", "status", "bullets", "missingReason", "clarificationQuestions")}
-            for s in current["sections"]
-        ],
-    }
-    db.add(ProjectArtifactVersion(
-        project_artifact_id=artifact.id, version_number=number,
-        snapshot=json.dumps(snapshot, ensure_ascii=False), approved_by=owner_id, approved_at=now,
-    ))
-    artifact.current_version = number
-    artifact.updated_at = now
-    db.commit()
-    return {"versionNumber": number, "label": _version_label(now)}
+    """
+    POST /api/projects/{id}/artifacts/{code}/versions -> the new version number.
+    The previous version moves to the versions table; the drafts on screen become the current
+    content (see brd_service.save_new_version).
+    """
+    _require_generated(code)
+    saved = brd_service.save_new_version(db, owner_id, project_id)
+    return {"versionNumber": saved["version_number"], "label": _version_label(saved["approved_at"])}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -454,15 +437,23 @@ def _generation_snapshot(db: Session, artifact: ProjectArtifact | None) -> dict 
 def _versions(db: Session, artifact: ProjectArtifact | None) -> list[dict]:
     if artifact is None:
         return []
-    rows = db.scalars(
+    # Older versions come from the versions table; the current one is the content in the sections.
+    older = db.scalars(
         select(ProjectArtifactVersion)
-        .where(ProjectArtifactVersion.project_artifact_id == artifact.id)
+        .where(
+            ProjectArtifactVersion.project_artifact_id == artifact.id,
+            ProjectArtifactVersion.version_number < artifact.current_version,
+        )
         .order_by(ProjectArtifactVersion.version_number)
     )
-    return [
-        {"number": v.version_number, "label": _version_label(v.approved_at), "isCurrent": v.version_number == artifact.current_version}
-        for v in rows
-    ]
+    versions = [{"number": v.version_number, "label": _version_label(v.approved_at), "isCurrent": False} for v in older]
+    if artifact.current_version >= 1:
+        versions.append({
+            "number": artifact.current_version,
+            "label": _version_label(artifact.approved_at or artifact.updated_at),
+            "isCurrent": True,
+        })
+    return versions
 
 
 def _version_label(moment: datetime) -> str:
