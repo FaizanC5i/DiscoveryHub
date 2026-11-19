@@ -215,6 +215,7 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
             DiscoveryPillar.name,
             DiscoveryCheckpoint.question,
             ProjectCheckpointAnswer.current_answer,
+            ProjectCheckpointAnswer.approved_at,
         )
         .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
         .join(DiscoveryPillar, DiscoveryPillar.id == DiscoveryCheckpoint.pillar_id)
@@ -229,8 +230,8 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
     if checkpoint_ids is not None:
         query = query.where(ProjectCheckpointAnswer.checkpoint_id.in_(checkpoint_ids))
     return [
-        {"code": code, "name": name, "pillar": pillar, "question": question, "answer": answer}
-        for code, name, pillar, question, answer in db.execute(query).all()
+        {"code": code, "name": name, "pillar": pillar, "question": question, "answer": answer, "approved_at": approved_at}
+        for code, name, pillar, question, answer, approved_at in db.execute(query).all()
         if answer and answer.strip()
     ]
 
@@ -540,7 +541,16 @@ def _run_generate(db: Session, run: AgentRun) -> None:
     as_of = latest_approval(db, run.project_id)
     payload = json.loads(run.input_payload or "{}")
     is_refresh = payload.get("trigger") == TRIGGER_REFRESH
-    source = _settings_text(db, run) + io.build_source_text(answers) + _all_clarifications_text(db, sections)
+    if is_refresh:
+        # Answers approved since the last generation go first and take priority.
+        previous = _answers_as_of(db, run.project_artifact_id)
+        new = [a for a in answers if previous is not None and a["approved_at"] and a["approved_at"] > previous]
+        other = [a for a in answers if a not in new]
+        answers_text = io.build_refresh_source_text(new, other)
+        payload["new_checkpoint_codes"] = [a["code"] for a in new]
+    else:
+        answers_text = io.build_source_text(answers)
+    source = _settings_text(db, run) + answers_text + _all_clarifications_text(db, sections)
     current_text = _current_brd_text(db, sections) if is_refresh else {}
     if current_text:
         source += _current_brd_block(sections, current_text)

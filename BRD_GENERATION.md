@@ -7,8 +7,11 @@ Everything else works like the stand-alone BRD app: generate, clarify, regenerat
 
 **Refresh button.** The draft editor shows how many answers were approved since the BRD was generated
 (`isOutdated`, `newAnswerCount`) and a **Refresh** button (`POST .../artifacts/BRD/refresh`). Refresh is one agent
-call with ALL approved User Discovery answers (old and new), the saved clarification answers and the **current
-BRD text**, so the agent updates the BRD instead of starting again. New text arrives as drafts; a section the agent
+call with ALL approved User Discovery answers, the saved clarification answers and the **current BRD text**, so
+the agent updates the BRD instead of starting again. Answers approved since the BRD was last generated (for
+example after a new document was uploaded and its answers approved) are sent first, as **NEW OR UPDATED ANSWERS
+(HIGHEST PRIORITY)**: where they disagree with the current BRD or older answers, the agent follows them. The
+unchanged answers follow as background. New text arrives as drafts; a section the agent
 cannot update keeps its text and gets questions. The current content stays until "Save new version".
 Automatic regeneration after each approval is **off** by default (`BRD_AUTO_REFRESH=false`) to save agent tokens;
 set it to true to turn it back on.

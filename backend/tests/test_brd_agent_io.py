@@ -84,3 +84,15 @@ def test_questions_only_reply_is_accepted_and_capped_at_three():
 def test_reply_without_the_brd_object_raises():
     with pytest.raises(io.AgentReplyError):
         io.normalize_agent_response({"output": "sorry, I cannot help"}, KEYS, io.MODE_GENERATE_ALL)
+
+
+def test_refresh_puts_new_answers_first_and_marks_them_as_priority():
+    new, old = ANSWERS[1:], ANSWERS[:1]
+    text = io.build_refresh_source_text(new, old)
+    assert text.startswith("APPROVED DISCOVERY ANSWERS\n\nNEW OR UPDATED ANSWERS")
+    assert "HIGHEST PRIORITY" in text
+    assert text.index("TECH02") < text.index("OTHER APPROVED ANSWERS") < text.index("USER05")
+
+
+def test_refresh_without_new_answers_is_the_normal_list():
+    assert io.build_refresh_source_text([], ANSWERS) == io.build_source_text(ANSWERS)
