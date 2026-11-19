@@ -32,3 +32,4 @@ fpdf2==2.8.3  # PDF export of artifacts
 pdfplumber==0.11.7
 httpx2
 pytest==9.2.0
+gunicorn==23.0.0
