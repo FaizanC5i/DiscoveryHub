@@ -82,10 +82,7 @@ export async function saveDraftSection(
  * Backend: POST /api/projects/{projectId}/artifacts/{code}/refresh
  */
 export async function refreshArtifactDraft(projectId: string, code: ArtifactCode): Promise<void> {
-<<<<<<< HEAD
   if (usesPlaceholder(code)) return prdPlaceholder.refreshPrd();
-=======
->>>>>>> 7759c0bd7d0939cc2ffc201e82c35a630c7a991a
   await apiRequest<{ agentRunId: number }>(`${artifactPath(projectId, code)}/refresh`, { method: "POST" });
 }
 
@@ -99,10 +96,7 @@ export async function saveDraftSectionContent(
   sectionId: string,
   content: string,
 ): Promise<DraftSection> {
-<<<<<<< HEAD
   if (usesPlaceholder(code)) return prdPlaceholder.savePrdSectionContent(sectionId, content);
-=======
->>>>>>> 7759c0bd7d0939cc2ffc201e82c35a630c7a991a
   return apiRequest<DraftSection>(`${artifactPath(projectId, code)}/sections/${encodeURIComponent(sectionId)}`, {
     method: "PUT",
     body: JSON.stringify({ content }),
@@ -120,10 +114,7 @@ export async function regenerateDraftSection(
   sectionId: string,
   answers: ClarificationAnswer[] = [],
 ): Promise<void> {
-<<<<<<< HEAD
   if (usesPlaceholder(code)) return prdPlaceholder.regeneratePrdSection(sectionId, answers);
-=======
->>>>>>> 7759c0bd7d0939cc2ffc201e82c35a630c7a991a
   await apiRequest<{ agentRunId: number }>(
     `${artifactPath(projectId, code)}/sections/${encodeURIComponent(sectionId)}/regenerate`,
     { method: "POST", body: JSON.stringify({ answers }) },
@@ -135,10 +126,7 @@ export async function regenerateDraftSection(
  * Backend: POST /api/projects/{projectId}/artifacts/{code}/sections/{sectionId}/clarify
  */
 export async function clarifyDraftSection(projectId: string, code: ArtifactCode, sectionId: string): Promise<void> {
-<<<<<<< HEAD
   if (usesPlaceholder(code)) return prdPlaceholder.clarifyPrdSection(sectionId);
-=======
->>>>>>> 7759c0bd7d0939cc2ffc201e82c35a630c7a991a
   await apiRequest<{ agentRunId: number }>(
     `${artifactPath(projectId, code)}/sections/${encodeURIComponent(sectionId)}/clarify`,
     { method: "POST" },
