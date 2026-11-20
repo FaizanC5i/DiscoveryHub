@@ -73,9 +73,24 @@ export interface DraftSection {
   title: string;
   status: DraftSectionStatus;
   bullets: string[];
-  /** Only when status is NEEDS_CLARIFICATION. */
+  /** The section text as Markdown (lists, tables). `bullets` is the same text as plain points. */
+  content?: string;
+  /** Why the agent could not write the section (empty when it has text). */
   missingReason?: string;
+  /** The agent's open questions. Answering them rewrites the section. */
   clarificationQuestions?: string[];
+  /** The draft waiting for review, when there is one. */
+  proposalId?: number;
+  /** The agent is working on this section right now. */
+  isWorking?: boolean;
+  /** Why the last agent run for this section failed. */
+  lastError?: string | null;
+}
+
+/** One answer to an agent question, sent with Regenerate. */
+export interface ClarificationAnswer {
+  question: string;
+  answer: string;
 }
 
 export interface DraftVersion {
@@ -102,6 +117,10 @@ export interface ArtifactDraft {
   snapshot: DraftSnapshot;
   versions: DraftVersion[];
   sections: DraftSection[];
+  /** An answer was approved after this draft was generated: Refresh would use it. */
+  isOutdated?: boolean;
+  /** How many answers were approved since this draft was generated. */
+  newAnswerCount?: number;
 }
 
 export type ExportFormat = "md" | "docx" | "pdf";

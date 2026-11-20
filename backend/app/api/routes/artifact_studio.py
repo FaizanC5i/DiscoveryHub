@@ -30,8 +30,11 @@ class DraftConfig(BaseModel):
     scope: str = Field(default="", max_length=1000)
 
 
-class SectionBullets(BaseModel):
-    bullets: list[str] = Field(max_length=200)
+class SectionEdit(BaseModel):
+    """Either the section's Markdown text (content) or a list of points (bullets)."""
+
+    content: str | None = Field(default=None, max_length=100000)
+    bullets: list[str] | None = Field(default=None, max_length=200)
 
 
 class ClarificationAnswer(BaseModel):
@@ -55,14 +58,22 @@ def generate(project_id: int, code: Code, body: DraftConfig, background: Backgro
     return {"agentRunId": run_id}
 
 
+@router.post("/artifacts/{code}/refresh", status_code=status.HTTP_202_ACCEPTED)
+def refresh(project_id: int, code: Code, background: BackgroundTasks, user: CurrentUser, db: DbSession) -> dict:
+    """Rewrite the whole BRD from all approved answers (old and new), updating its current text."""
+    run_id = studio.refresh(db, user.id, project_id, code)
+    background.add_task(brd_service.run_brd_job, run_id)
+    return {"agentRunId": run_id}
+
+
 @router.get("/artifacts/{code}")
 def draft(project_id: int, code: Code, user: CurrentUser, db: DbSession) -> dict:
     return studio.draft(db, user.id, project_id, code)
 
 
 @router.put("/artifacts/{code}/sections/{section_id}")
-def save_section(project_id: int, code: Code, section_id: SectionId, body: SectionBullets, user: CurrentUser, db: DbSession) -> dict:
-    return studio.save_section(db, user.id, project_id, code, section_id, body.bullets)
+def save_section(project_id: int, code: Code, section_id: SectionId, body: SectionEdit, user: CurrentUser, db: DbSession) -> dict:
+    return studio.save_section(db, user.id, project_id, code, section_id, bullets=body.bullets, content=body.content)
 
 
 @router.post("/artifacts/{code}/sections/{section_id}/regenerate", status_code=status.HTTP_202_ACCEPTED)

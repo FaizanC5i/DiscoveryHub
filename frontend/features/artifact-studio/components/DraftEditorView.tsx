@@ -7,10 +7,13 @@ import { badgeClass, cardClass } from "@/features/discovery/utils/class-names";
 import {
   exportArtifactDraft,
   getArtifactDraft,
-  saveDraftSection,
+  clarifyDraftSection,
+  refreshArtifactDraft,
+  regenerateDraftSection,
+  saveDraftSectionContent,
   saveDraftVersion,
 } from "../services/artifact-studio.service";
-import type { ArtifactCode, ArtifactDraft, ExportOptions } from "../types/artifact-studio.types";
+import type { ArtifactCode, ArtifactDraft, ClarificationAnswer, ExportOptions } from "../types/artifact-studio.types";
 import { DraftExportBar } from "./DraftExportBar";
 import { DraftSectionContent } from "./DraftSectionContent";
 import { DraftSectionNav } from "./DraftSectionNav";
@@ -33,6 +36,8 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSavingVersion, setIsSavingVersion] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,26 +66,55 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
     setReloadKey((k) => k + 1);
   }
 
-  async function handleSaveSection(sectionId: string, bullets: string[]) {
-    const updated = await saveDraftSection(projectId, code, sectionId, bullets);
+  async function handleSaveSection(sectionId: string, content: string) {
+    const updated = await saveDraftSectionContent(projectId, code, sectionId, content);
     setDraft((current) =>
       current ? { ...current, sections: current.sections.map((s) => (s.id === sectionId ? updated : s)) } : current,
     );
+  }
+
+  // The agent works in the background: reload, so the page shows "Generating" and keeps checking.
+  async function handleRegenerate(sectionId: string, answers: ClarificationAnswer[]) {
+    await regenerateDraftSection(projectId, code, sectionId, answers);
+    setReloadKey((k) => k + 1);
+  }
+
+  async function handleClarify(sectionId: string) {
+    await clarifyDraftSection(projectId, code, sectionId);
+    setReloadKey((k) => k + 1);
+  }
+
+  /** Refresh: the agent rewrites the draft from all approved answers, old and new. */
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    setRefreshError(null);
+    try {
+      await refreshArtifactDraft(projectId, code);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setRefreshError(e instanceof Error ? e.message : "Could not refresh the draft.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  /** Left list: jump to the section on the scrolling page. */
+  function goToSection(sectionId: string) {
+    setActiveSectionId(sectionId);
+    document.getElementById(`section-${sectionId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function handleSaveVersion() {
     if (!draft) return;
     setIsSavingVersion(true);
     const currentNumber = draft.versions.find((v) => v.isCurrent)?.number ?? 0;
-    const newNumber = await saveDraftVersion(projectId, code, currentNumber);
-    setDraft({
-      ...draft,
-      versions: [
-        ...draft.versions.map((v) => ({ ...v, isCurrent: false })),
-        { number: newNumber, label: "Just now", isCurrent: true },
-      ],
-    });
-    setIsSavingVersion(false);
+    try {
+      await saveDraftVersion(projectId, code, currentNumber);
+      // The drafts became the current content: reload to show the new statuses and version list.
+      setReloadKey((k) => k + 1);
+    } finally {
+      setIsSavingVersion(false);
+    }
   }
 
   async function handleExport(options: ExportOptions) {
@@ -125,7 +159,7 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
 
         {/* Sections + document */}
         <div className={`${cardClass} grid grid-cols-1 overflow-hidden bg-(--color-bg-default-secondary) lg:grid-cols-[var(--space-56)_minmax(0,1fr)]`}>
-          <DraftSectionNav sections={draft.sections} activeId={activeSection.id} onSelect={setActiveSectionId} />
+          <DraftSectionNav sections={draft.sections} activeId={activeSection.id} onSelect={goToSection} />
 
           <div className="p-(--space-4) lg:p-(--space-7)">
             <article className={`${cardClass} p-(--space-5) lg:p-(--space-7)`}>
@@ -142,12 +176,44 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
                 <span className={badgeClass.brand}>{draft.status}</span>
               </header>
 
-              <DraftSectionContent
-                key={activeSection.id}
-                section={activeSection}
-                onSave={(bullets) => handleSaveSection(activeSection.id, bullets)}
-                onEditingChange={setIsEditing}
-              />
+              {/* Refresh: use the answers approved since this draft was generated. */}
+              <div className="mb-(--space-6) flex flex-wrap items-center justify-between gap-(--space-3) rounded-(--radius-md) border border-(--color-border-default-disabled) bg-(--color-bg-default-secondary) px-(--space-4) py-(--space-3)">
+                <p className="m-0 font-(family-name:--font-family-secondary) text-(length:--font-size-body-medium) leading-(--line-height-body-medium)">
+                  {draft.status === "Generating"
+                    ? "The agent is updating this draft…"
+                    : draft.isOutdated
+                      ? `${draft.newAnswerCount ?? 0} answer${draft.newAnswerCount === 1 ? " was" : "s were"} approved since this draft was generated. Refresh to include ${draft.newAnswerCount === 1 ? "it" : "them"}.`
+                      : "This draft uses all approved answers."}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleRefresh()}
+                  disabled={isRefreshing || draft.status === "Generating"}
+                  className="inline-flex cursor-pointer items-center rounded-(--radius-md) border border-transparent bg-(--color-bg-brand-primary) px-(--space-4) py-(--space-2) text-(length:--font-size-body-medium) leading-(--line-height-body-medium) font-semibold text-(--color-text-default-inverse) hover:bg-(--color-bg-brand-secondary) disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isRefreshing ? "Refreshing…" : "Refresh"}
+                </button>
+                {refreshError && (
+                  <p role="alert" className="m-0 w-full text-(length:--font-size-body-small) leading-(--line-height-body-small) text-(--color-red-700)">
+                    {refreshError}
+                  </p>
+                )}
+              </div>
+
+              {/* All sections on one scrolling page, as in the original BRD tool. */}
+              <div className="flex flex-col gap-(--space-12)">
+                {draft.sections.map((section) => (
+                  <DraftSectionContent
+                    key={section.id}
+                    section={section}
+                    isBusy={draft.status === "Generating"}
+                    onSave={(content) => handleSaveSection(section.id, content)}
+                    onRegenerate={(answers) => handleRegenerate(section.id, answers)}
+                    onClarify={() => handleClarify(section.id)}
+                    onEditingChange={setIsEditing}
+                  />
+                ))}
+              </div>
             </article>
           </div>
         </div>

@@ -63,6 +63,33 @@ def build_source_text(answers: list[dict]) -> str:
     return "APPROVED DISCOVERY ANSWERS\n\n" + "\n\n".join(blocks)
 
 
+def build_refresh_source_text(new_answers: list[dict], other_answers: list[dict]) -> str:
+    """
+    Refresh input: the answers approved since the BRD was last generated come first and take
+    priority; the unchanged approved answers follow as background.
+    """
+    if not new_answers:
+        return build_source_text(other_answers)
+
+    def blocks(answers: list[dict]) -> str:
+        return "\n\n".join(
+            f"--- CHECKPOINT {a['code']}: {a['name']} ({a['pillar']} pillar) ---\n"
+            f"Question: {a['question']}\n"
+            f"Approved answer:\n{(a['answer'] or '').strip()}"
+            for a in answers
+        )
+
+    text = (
+        "APPROVED DISCOVERY ANSWERS\n\n"
+        "NEW OR UPDATED ANSWERS (approved after this BRD was last written). HIGHEST PRIORITY: use them to update "
+        "the BRD, and where they disagree with the current BRD or with the other answers, follow these.\n\n"
+        + blocks(new_answers)
+    )
+    if other_answers:
+        text += "\n\nOTHER APPROVED ANSWERS (unchanged since this BRD was last written; background)\n\n" + blocks(other_answers)
+    return text
+
+
 def build_document_settings(title: str | None, audience: str | None, scope: str | None) -> str:
     """The "Configure the draft" choices, placed before the answers. Empty when none is set."""
     lines = []

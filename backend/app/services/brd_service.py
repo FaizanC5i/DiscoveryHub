@@ -74,6 +74,7 @@ BRD_AGENT_CODE = "BRD_AGENT"
 RUN_GENERATE = "brd_generate"
 RUN_REGENERATE = "brd_regenerate"
 RUN_CLARIFY = "brd_clarify"
+TRIGGER_REFRESH = "refresh"
 OPEN_PROPOSAL_STATUSES = ("PENDING", "NEEDS_CLARIFICATION")
 # A run still "running" after this long is treated as dead (for example the server restarted).
 # A generate run makes up to ~15 agent calls of several minutes each, so this is generous.
@@ -214,6 +215,7 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
             DiscoveryPillar.name,
             DiscoveryCheckpoint.question,
             ProjectCheckpointAnswer.current_answer,
+            ProjectCheckpointAnswer.approved_at,
         )
         .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
         .join(DiscoveryPillar, DiscoveryPillar.id == DiscoveryCheckpoint.pillar_id)
@@ -228,8 +230,8 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
     if checkpoint_ids is not None:
         query = query.where(ProjectCheckpointAnswer.checkpoint_id.in_(checkpoint_ids))
     return [
-        {"code": code, "name": name, "pillar": pillar, "question": question, "answer": answer}
-        for code, name, pillar, question, answer in db.execute(query).all()
+        {"code": code, "name": name, "pillar": pillar, "question": question, "answer": answer, "approved_at": approved_at}
+        for code, name, pillar, question, answer, approved_at in db.execute(query).all()
         if answer and answer.strip()
     ]
 
@@ -348,6 +350,21 @@ def start_generate(db: Session, owner_id: int, project_id: int, settings: dict |
         artifact.audience = (settings.get("audience") or "").strip()[:100] or None
         artifact.scope = (settings.get("scope") or "").strip()[:1000] or None
     return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL})
+
+
+def start_refresh(db: Session, owner_id: int, project_id: int) -> int:
+    """
+    Refresh: rewrite the whole BRD from ALL approved User Discovery answers (old and newly approved),
+    sending the current BRD text with them so the agent updates it instead of starting again.
+    The new text arrives as drafts; the current content stays until "Save new version".
+    """
+    _owned_project(db, owner_id, project_id)
+    if not approved_answers(db, project_id):
+        raise api_error(
+            409, "NO_APPROVED_ANSWERS", "The BRD is written from approved checkpoint answers. None are approved yet."
+        )
+    artifact = _get_or_create_brd(db, project_id, owner_id)
+    return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL, "trigger": TRIGGER_REFRESH})
 
 
 def start_regenerate(
@@ -522,8 +539,21 @@ def _run_generate(db: Session, run: AgentRun) -> None:
     if not answers:
         raise BrdRunError("No approved User Discovery answers yet.")
     as_of = latest_approval(db, run.project_id)
-    source = _settings_text(db, run) + io.build_source_text(answers) + _all_clarifications_text(db, sections)
     payload = json.loads(run.input_payload or "{}")
+    is_refresh = payload.get("trigger") == TRIGGER_REFRESH
+    if is_refresh:
+        # Answers approved since the last generation go first and take priority.
+        previous = _answers_as_of(db, run.project_artifact_id)
+        new = [a for a in answers if previous is not None and a["approved_at"] and a["approved_at"] > previous]
+        other = [a for a in answers if a not in new]
+        answers_text = io.build_refresh_source_text(new, other)
+        payload["new_checkpoint_codes"] = [a["code"] for a in new]
+    else:
+        answers_text = io.build_source_text(answers)
+    source = _settings_text(db, run) + answers_text + _all_clarifications_text(db, sections)
+    current_text = _current_brd_text(db, sections) if is_refresh else {}
+    if current_text:
+        source += _current_brd_block(sections, current_text)
     payload.update(
         answers_as_of=as_of.isoformat() if as_of else None,
         checkpoint_codes=[a["code"] for a in answers],
@@ -534,7 +564,8 @@ def _run_generate(db: Session, run: AgentRun) -> None:
     db.commit()  # release the connection while the agent works
 
     result, calls = _call_and_parse(io.build_agent_input(source, io.MODE_GENERATE_ALL), keys, io.MODE_GENERATE_ALL, "")
-    calls += _prefetch_questions(source, result, keys)
+    if not is_refresh:  # a refresh saves tokens: questions come with Clarify when needed
+        calls += _prefetch_questions(source, result, keys)
 
     now = utc_now()
     agent_id = _brd_agent_id(db)
@@ -542,10 +573,61 @@ def _run_generate(db: Session, run: AgentRun) -> None:
         item = result["sections"][section.section.section_key]
         if item["status"] == "insufficient" and not item["questions"]:
             item["questions"] = _fallback_questions(section.section)
-        _save_proposal(db, run, section, item, agent_id, now)
+        # On a refresh, a section that already has text keeps it when the agent only has questions.
+        keep_text = is_refresh and item["status"] == "insufficient" and section.id in current_text
+        _save_proposal(db, run, section, item, agent_id, now, questions_only=keep_text)
     _mark_draft(db.get(ProjectArtifact, run.project_artifact_id), now)
     _succeed(run, result, calls, now)
     db.commit()
+
+
+def _current_brd_text(db: Session, sections: list[ProjectArtifactSection]) -> dict[int, str]:
+    """What each section shows now: its draft waiting for review, else its current content."""
+    drafts: dict[int, str] = {}
+    for proposal in db.scalars(
+        select(ArtifactSectionProposal)
+        .where(
+            ArtifactSectionProposal.project_artifact_section_id.in_([s.id for s in sections]),
+            ArtifactSectionProposal.status == "PENDING",
+        )
+        .order_by(ArtifactSectionProposal.id)
+    ):
+        if proposal.proposed_content:
+            drafts[proposal.project_artifact_section_id] = proposal.proposed_content
+    return {
+        s.id: drafts.get(s.id) or s.current_content
+        for s in sections
+        if (drafts.get(s.id) or s.current_content or "").strip()
+    }
+
+
+def _current_brd_block(sections: list[ProjectArtifactSection], text: dict[int, str]) -> str:
+    blocks = [
+        f"--- CURRENT SECTION {s.section.section_key} ({s.section.title}) ---\n{text[s.id].strip()}"
+        for s in sections
+        if s.id in text
+    ]
+    return (
+        "\n\nCURRENT BRD (written earlier from older answers. Update it with the approved answers above: keep what "
+        "is still true, add what is new, and remove what the answers now contradict.)\n\n" + "\n\n".join(blocks)
+    )
+
+
+def answers_approved_since(db: Session, project_id: int, since) -> int:
+    """How many BRD input answers were approved after `since` (all approved ones when since is None)."""
+    query = (
+        select(func.count())
+        .select_from(ProjectCheckpointAnswer)
+        .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
+        .where(
+            ProjectCheckpointAnswer.project_id == project_id,
+            ProjectCheckpointAnswer.approved_at.is_not(None),
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
+        )
+    )
+    if since is not None:
+        query = query.where(ProjectCheckpointAnswer.approved_at > since)
+    return db.scalar(query) or 0
 
 
 def _settings_text(db: Session, run: AgentRun) -> str:
@@ -752,6 +834,7 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
     ids = [row.id for row in rows]
     # One query each for every section's open proposal and saved clarifications (the database is remote).
     open_proposals: dict[int, ArtifactSectionProposal] = {}
+    latest_by_status: dict[tuple[int, str], ArtifactSectionProposal] = {}
     for proposal in db.scalars(
         select(ArtifactSectionProposal)
         .where(
@@ -761,6 +844,7 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
         .order_by(ArtifactSectionProposal.id)
     ):
         open_proposals[proposal.project_artifact_section_id] = proposal  # newest wins
+        latest_by_status[(proposal.project_artifact_section_id, proposal.status)] = proposal
     clarifications: dict[int, list[ArtifactSectionClarification]] = {}
     for clarification in db.scalars(
         select(ArtifactSectionClarification)
@@ -770,7 +854,9 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
         clarifications.setdefault(clarification.project_artifact_section_id, []).append(clarification)
     sections = [
         _section_dict(
-            row, row.section, feeds.get(row.artifact_section_id, []), open_proposals.get(row.id), clarifications.get(row.id, [])
+            row, row.section, feeds.get(row.artifact_section_id, []), open_proposals.get(row.id), clarifications.get(row.id, []),
+            pending=latest_by_status.get((row.id, "PENDING")),
+            asking=latest_by_status.get((row.id, "NEEDS_CLARIFICATION")),
         )
         for row in rows
     ]
@@ -856,61 +942,111 @@ def reject_proposal(db: Session, owner_id: int, project_id: int, proposal_id: in
     return _section_after_change(db, section)
 
 
-def approve_brd(db: Session, owner_id: int, project_id: int) -> dict:
-    """Freeze the current content of every section as the next version."""
+def save_new_version(db: Session, owner_id: int, project_id: int, approve: bool = False) -> dict:
+    """
+    Save the BRD as a new version. Like the checkpoint answers, the CURRENT version always lives in
+    project_artifact_sections and project_artifact_versions holds only OLDER versions:
+    1. the version being replaced (current content, number current_version) is copied to the
+       versions table, with who saved it and when;
+    2. every draft waiting for review becomes its section's current content;
+    3. current_version goes up by one.
+    approve=True also marks the BRD APPROVED (the "Approve BRD" action).
+    """
     _owned_project(db, owner_id, project_id)
     artifact = _find_brd(db, project_id, _brd_type(db).id)
     if artifact is None:
         raise api_error(404, "BRD_NOT_FOUND", "This project has no BRD yet")
     rows = _section_rows(db, artifact.id)
-    if not any(row.status == "APPROVED" and row.current_content for row in rows):
-        raise api_error(409, "NOTHING_APPROVED", "Approve at least one section before approving the BRD")
-    now = utc_now()
-    snapshot = [
-        {
-            "section_key": row.section.section_key,
-            "title": row.section.title,
-            "sort_order": row.section.sort_order,
-            "status": row.status,
-            "content": row.current_content,
-        }
-        for row in rows
-    ]
-    version_number = artifact.current_version + 1
-    db.add(
-        ProjectArtifactVersion(
-            project_artifact_id=artifact.id,
-            version_number=version_number,
-            snapshot=json.dumps(snapshot, ensure_ascii=False),
-            approved_by=owner_id,
-            approved_at=now,
+    drafts: dict[int, ArtifactSectionProposal] = {}
+    for proposal in db.scalars(
+        select(ArtifactSectionProposal)
+        .where(
+            ArtifactSectionProposal.project_artifact_section_id.in_([row.id for row in rows]),
+            ArtifactSectionProposal.status == "PENDING",
         )
-    )
-    artifact.current_version = version_number
-    artifact.status = "APPROVED"
+        .order_by(ArtifactSectionProposal.id)
+    ):
+        if proposal.proposed_content:
+            drafts[proposal.project_artifact_section_id] = proposal  # newest wins
+    if not drafts and not any(row.current_content for row in rows):
+        raise api_error(409, "NOTHING_TO_SAVE", "Generate the BRD before saving a version")
+
+    now = utc_now()
+    # 1. The version being replaced goes to the versions table (it holds older versions only).
+    if artifact.current_version >= 1:
+        already_kept = db.scalar(
+            select(ProjectArtifactVersion.id).where(
+                ProjectArtifactVersion.project_artifact_id == artifact.id,
+                ProjectArtifactVersion.version_number == artifact.current_version,
+            )
+        )
+        if already_kept is None:
+            db.add(
+                ProjectArtifactVersion(
+                    project_artifact_id=artifact.id,
+                    version_number=artifact.current_version,
+                    snapshot=json.dumps(_current_snapshot(rows), ensure_ascii=False),
+                    approved_by=artifact.approved_by or owner_id,
+                    approved_at=artifact.approved_at or artifact.updated_at or now,
+                )
+            )
+    # 2. The drafts on screen become the current content.
+    for row in rows:
+        draft = drafts.get(row.id)
+        if draft is not None:
+            draft.status = "APPROVED"
+            draft.reviewed_by = owner_id
+            draft.reviewed_at = now
+            _approve_content(row, draft.proposed_content, "AGENT", owner_id, now)
+    # 3. The new current version: who saved it and when.
+    artifact.current_version += 1
     artifact.approved_by = owner_id
     artifact.approved_at = now
     artifact.updated_at = now
+    if approve:
+        artifact.status = "APPROVED"
     db.commit()
-    return {"version_number": version_number, "approved_at": now}
+    return {"version_number": artifact.current_version, "approved_at": now}
+
+
+def approve_brd(db: Session, owner_id: int, project_id: int) -> dict:
+    """Approve the BRD: save it as a new version and mark it APPROVED."""
+    return save_new_version(db, owner_id, project_id, approve=True)
 
 
 def list_versions(db: Session, owner_id: int, project_id: int) -> list[dict]:
+    """The current version (from the sections) first, then the older ones (from the versions table)."""
     _owned_project(db, owner_id, project_id)
     artifact = _find_brd(db, project_id, _brd_type(db).id)
     if artifact is None:
         return []
-    rows = db.scalars(
+    out = []
+    if artifact.current_version >= 1:
+        out.append({"version_number": artifact.current_version, "approved_by": artifact.approved_by,
+                    "approved_at": artifact.approved_at or artifact.updated_at})
+    for v in db.scalars(
         select(ProjectArtifactVersion)
-        .where(ProjectArtifactVersion.project_artifact_id == artifact.id)
+        .where(
+            ProjectArtifactVersion.project_artifact_id == artifact.id,
+            ProjectArtifactVersion.version_number < artifact.current_version,
+        )
         .order_by(ProjectArtifactVersion.version_number.desc())
-    )
-    return [{"version_number": v.version_number, "approved_by": v.approved_by, "approved_at": v.approved_at} for v in rows]
+    ):
+        out.append({"version_number": v.version_number, "approved_by": v.approved_by, "approved_at": v.approved_at})
+    return out
 
 
 def get_version(db: Session, owner_id: int, project_id: int, version_number: int) -> dict:
+    """The current version is read from the sections; older ones from the versions table."""
     _owned_project(db, owner_id, project_id)
     artifact = _find_brd(db, project_id, _brd_type(db).id)
+    if artifact is not None and version_number == artifact.current_version and version_number >= 1:
+        return {
+            "version_number": version_number,
+            "approved_by": artifact.approved_by,
+            "approved_at": artifact.approved_at or artifact.updated_at,
+            "sections": _current_snapshot(_section_rows(db, artifact.id)),
+        }
     version = None
     if artifact is not None:
         version = db.scalar(
@@ -927,6 +1063,19 @@ def get_version(db: Session, owner_id: int, project_id: int, version_number: int
         "approved_at": version.approved_at,
         "sections": json.loads(version.snapshot),
     }
+
+
+def _current_snapshot(rows: list[ProjectArtifactSection]) -> list[dict]:
+    return [
+        {
+            "section_key": row.section.section_key,
+            "title": row.section.title,
+            "sort_order": row.section.sort_order,
+            "status": row.status,
+            "content": row.current_content,
+        }
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -981,12 +1130,24 @@ def _section_after_change(db: Session, section: ProjectArtifactSection) -> dict:
             .order_by(ArtifactSectionClarification.id)
         )
     )
+    def latest(status: str) -> ArtifactSectionProposal | None:
+        return db.scalar(
+            select(ArtifactSectionProposal)
+            .where(
+                ArtifactSectionProposal.project_artifact_section_id == section.id,
+                ArtifactSectionProposal.status == status,
+            )
+            .order_by(ArtifactSectionProposal.id.desc())
+        )
+
     return _section_dict(
         section,
         section.section,
         _feeds_by_section(db, artifact_type_id).get(section.artifact_section_id, []),
         _open_proposal(db, section.id),
         clarifications,
+        pending=latest("PENDING"),
+        asking=latest("NEEDS_CLARIFICATION"),
     )
 
 
@@ -996,7 +1157,14 @@ def _section_dict(
     fed_by: list[str],
     proposal: ArtifactSectionProposal | None,
     clarifications: list[ArtifactSectionClarification],
+    pending: ArtifactSectionProposal | None = None,
+    asking: ArtifactSectionProposal | None = None,
 ) -> dict:
+    """
+    open_proposal: the newest open proposal (draft or questions).
+    pending_draft / open_questions: the newest of each kind, since a section can have a draft
+    waiting for review and, after Clarify, new questions at the same time.
+    """
     return {
         "section_key": template.section_key,
         "title": template.title,
@@ -1018,9 +1186,24 @@ def _section_dict(
             if proposal
             else None
         ),
+        "pending_draft": _proposal_view(pending),
+        "open_questions": _proposal_view(asking),
         "clarifications": [
             {"id": c.id, "question": c.question, "answer": c.answer, "created_at": c.created_at} for c in clarifications
         ],
+    }
+
+
+def _proposal_view(proposal: ArtifactSectionProposal | None) -> dict | None:
+    if proposal is None:
+        return None
+    return {
+        "id": proposal.id,
+        "status": proposal.status,
+        "content": proposal.proposed_content,
+        "missing_reason": proposal.missing_reason,
+        "questions": json.loads(proposal.clarification_questions or "[]"),
+        "created_at": proposal.created_at,
     }
 
 
