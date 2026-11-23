@@ -122,5 +122,5 @@ function clearSessionCookies(response: NextResponse): void {
  * statically at build time. Add a path here when you add a protected route.
  */
 export const config = {
-  matcher: ["/dashboard", "/dashboard/:path*"],
+  matcher: ["/dashboard", "/dashboard/:path*", "/projects/:path*"],
 };

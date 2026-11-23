@@ -22,8 +22,10 @@
 import { ROUTES } from "@/lib/constants";
 import { API_PATHS } from "./endpoints";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
+export const API_BASE_URL =
+  typeof window === "undefined"
+    ? (process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
+    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
 /** Paths where a 401 means "wrong credentials", not "session expired". Never refresh on these. */
 const PATHS_WITHOUT_REFRESH = new Set<string>([
   API_PATHS.auth.login,
