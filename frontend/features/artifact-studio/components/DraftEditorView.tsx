@@ -164,6 +164,7 @@ export function DraftEditorView({ projectId, artifactSlug }: DraftEditorViewProp
           <div className="p-(--space-4) lg:p-(--space-7)">
             <article className={`${cardClass} p-(--space-5) lg:p-(--space-7)`}>
               <header className="mb-(--space-6) border-b-2 border-(--color-neutral-400) pb-(--space-6)">
+                <img src="/brand/c5i-logo.png" alt="C5i Human • AI • Impact" className="mb-(--space-4) h-12 w-auto" />
                 <h1 className="m-0 text-(length:--font-size-heading-5) leading-(--line-height-heading-5) font-medium">
                   {draft.title}
                 </h1>

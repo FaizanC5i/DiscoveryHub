@@ -14,6 +14,9 @@ them) but their draft routes answer 404 ARTIFACT_NOT_AVAILABLE.
 import io as _io
 import json
 import re
+from pathlib import Path
+
+from app.services import mom_documents
 from datetime import datetime
 
 from sqlalchemy import select
@@ -259,6 +262,7 @@ def _export_model(current: dict, sources: list[str], include_questions: bool) ->
     for s in current["sections"]:
         sections.append({
             "heading": f"{s['number']:02d} {s['title']}",
+            "content": s.get("content") or "",
             "bullets": s["bullets"],
             "note": None if s["bullets"] else (s.get("missingReason") or DEFAULT_MISSING_REASON),
             "questions": (s.get("clarificationQuestions") or []) if include_questions else [],
@@ -295,34 +299,35 @@ def _export_md(doc: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _export_docx(doc: dict) -> bytes:
-    from docx import Document  # python-docx, already a backend dependency
+C5I_LOGO = Path(__file__).resolve().parents[1] / "assets" / "c5i-logo.png"
 
-    word = Document()
-    word.add_heading(doc["title"], 0)
+
+def _export_docx(doc: dict) -> bytes:
+    """The BRD as Word: logo in the header, every section's Markdown laid out with its tables."""
+    blocks: list[tuple] = []
     if doc["description"]:
-        word.add_paragraph(doc["description"])
-    for s in doc["settings"]:
-        word.add_paragraph(s).italic = True
+        blocks.append(("para", doc["description"]))
+    blocks += [("para", f"_{s}_") for s in doc["settings"]]
     if doc["warning"]:
-        word.add_paragraph().add_run(doc["warning"]).bold = True
+        blocks.append(("para", f"**{doc['warning']}**"))
     for s in doc["sections"]:
-        word.add_heading(s["heading"], 1)
-        for b in s["bullets"]:
-            word.add_paragraph(b, style="List Bullet")
-        if s["note"]:
-            word.add_paragraph().add_run(s["note"]).italic = True
+        blocks.append(("heading", 1, s["heading"]))
+        if s["content"].strip():
+            blocks += mom_documents.text_to_blocks(s["content"])
+        elif s["bullets"]:
+            blocks += [("bullet", b, 1) for b in s["bullets"]]
+        else:
+            blocks.append(("para", s["note"] or DEFAULT_MISSING_REASON))
         if s["questions"]:
-            word.add_paragraph().add_run("Open questions").bold = True
-            for q in s["questions"]:
-                word.add_paragraph(q, style="List Bullet")
+            blocks.append(("para", "**Open questions**"))
+            blocks += [("bullet", q, 1) for q in s["questions"]]
     if doc["sources"]:
-        word.add_heading("Sources", 1)
-        for t in doc["sources"]:
-            word.add_paragraph(t, style="List Bullet")
-    buffer = _io.BytesIO()
-    word.save(buffer)
-    return buffer.getvalue()
+        blocks.append(("heading", 1, "Sources"))
+        blocks += [("bullet", t, 1) for t in doc["sources"]]
+    return mom_documents.to_docx(
+        {"title": doc["title"], "project_name": None, "meta_line": "", "blocks": blocks, "output": None},
+        logo=C5I_LOGO,
+    )
 
 
 def _export_pdf(doc: dict) -> bytes:

@@ -525,7 +525,13 @@ def _call_and_parse(text_input: str, section_keys: list[str], mode: str, target:
     for attempt in range(1, PARSE_ATTEMPTS + 1):
         raw = call_with_retry(lambda: call_brd_agent(text_input), f"BRD agent ({mode})")
         try:
-            return io.normalize_agent_response(raw, section_keys, mode, target), attempt
+            result = io.normalize_agent_response(raw, section_keys, mode, target)
+            counts = {s: sum(1 for v in result["sections"].values() if v["status"] == s) for s in io.SECTION_STATUSES}
+            log.info(
+                "BRD agent reply read (%s, attempt %d): %d complete, %d insufficient, %d skipped.",
+                mode, attempt, counts["complete"], counts["insufficient"], counts["skipped"],
+            )
+            return result, attempt
         except io.AgentReplyError as exc:
             last_error = exc
             log.warning("BRD agent reply could not be read (%s, attempt %d/%d)", mode, attempt, PARSE_ATTEMPTS)

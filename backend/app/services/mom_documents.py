@@ -10,6 +10,7 @@ import io
 import json
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from docx import Document
@@ -74,10 +75,10 @@ def to_json(doc: dict) -> bytes:
     return json.dumps(doc["output"], indent=2, ensure_ascii=False, default=str).encode("utf-8")
 
 
-def to_docx(doc: dict) -> bytes:
+def to_docx(doc: dict, logo: Path | None = None) -> bytes:
     document = Document()
     _setup_styles(document)
-    _setup_page(document, doc["project_name"] or doc["title"])
+    _setup_page(document, doc["project_name"] or doc["title"], logo)
 
     title = document.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -333,7 +334,7 @@ def _add_field(paragraph, instruction: str) -> None:
     run_with(end)
 
 
-def _setup_page(document, header_text: str) -> None:
+def _setup_page(document, header_text: str, logo: Path | None = None) -> None:
     section = document.sections[0]
     section.page_width = Cm(21)
     section.page_height = Cm(29.7)
@@ -342,10 +343,14 @@ def _setup_page(document, header_text: str) -> None:
     section.bottom_margin = Cm(2)
 
     header = section.header.paragraphs[0]
-    header.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    run = header.add_run(header_text[:100])
-    run.font.size = Pt(8.5)
-    run.font.color.rgb = GRAY
+    if logo is not None:
+        header.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        header.add_run().add_picture(str(logo), width=Cm(2.2))
+    else:
+        header.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        run = header.add_run(header_text[:100])
+        run.font.size = Pt(8.5)
+        run.font.color.rgb = GRAY
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER

@@ -72,6 +72,31 @@ export async function downloadDocument(
   return { blob: await response.blob(), filename: match?.[1] ?? `meeting.${format}` };
 }
 
+export interface AttachResult {
+  project_id: number;
+  ok: boolean;
+  error?: string;
+}
+
+export function attachToProjects(
+  kind: DocumentKind,
+  output: unknown,
+  projectIds: number[],
+  projectName: string | null,
+  sourceName: string | null,
+): Promise<{ results: AttachResult[] }> {
+  return apiRequest<{ results: AttachResult[] }>(API_PATHS.mom.attach, {
+    method: "POST",
+    body: JSON.stringify({
+      project_ids: projectIds,
+      document: kind,
+      output,
+      project_name: projectName,
+      source_name: sourceName,
+    }),
+  });
+}
+
 export function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

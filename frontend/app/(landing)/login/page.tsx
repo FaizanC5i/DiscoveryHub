@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { LoginForm } from "@/features/auth/components/LoginForm";
+import { AuthLanding } from "@/features/auth/components/landing/AuthLanding";
 
 export const metadata: Metadata = {
   title: "Sign in",
 };
 
 export default function LoginPage() {
-  return <LoginForm />;
+  return <AuthLanding initialMode="signin" />;
 }

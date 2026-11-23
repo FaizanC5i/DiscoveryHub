@@ -25,6 +25,44 @@ UNWRAP_KEYS = (
 )
 
 
+def find_json_objects(raw: Any, accepts: Callable[[dict], bool], depth: int = 0) -> list[dict]:
+    """Every dict in the reply for which accepts(dict) is True, in the order they appear."""
+    if depth > MAX_UNWRAP_DEPTH:
+        return []
+
+    found: list[dict] = []
+    if isinstance(raw, dict):
+        if accepts(raw):
+            found.append(raw)
+        for value in raw.values():
+            found.extend(find_json_objects(value, accepts, depth + 1))
+        return found
+
+    if isinstance(raw, list):
+        for value in raw:
+            found.extend(find_json_objects(value, accepts, depth + 1))
+        return found
+
+    if isinstance(raw, str):
+        text = raw.strip()
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+        try:
+            return find_json_objects(json.loads(text), accepts, depth + 1)
+        except ValueError:
+            pass
+        decoder = json.JSONDecoder()
+        index = text.find("{")
+        while index != -1:
+            try:
+                obj, end = decoder.raw_decode(text[index:])
+                found.extend(find_json_objects(obj, accepts, depth + 1))
+                index = text.find("{", index + end)
+            except ValueError:
+                index = text.find("{", index + 1)
+    return found
+
+
 def find_json_object(raw: Any, accepts: Callable[[dict], bool], depth: int = 0) -> dict | None:
     """Return the first dict, anywhere in the reply, for which accepts(dict) is True."""
     if depth > MAX_UNWRAP_DEPTH:

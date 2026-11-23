@@ -21,6 +21,7 @@ function isApproved(card: CheckpointCard): boolean {
 }
 
 function gapOf(card: CheckpointCard): { label: string; tone: "error" | "warning" | "brand" | "success" } {
+  if (isApproved(card) && card.pending_proposal) return { label: "New proposal", tone: "brand" };
   if (isApproved(card)) return { label: "Answered", tone: "success" };
   if (card.chunk_count === 0) return { label: "Critical gap", tone: "error" };
   if (card.pending_proposal?.agent_status === "Needs Clarification") {
@@ -53,10 +54,11 @@ export function UserDiscoveryChecklist({ projectId }: UserDiscoveryChecklistProp
   const cards = (ud.overview?.checkpoints ?? []).filter((c) => !FEATURED_CODES.has(c.checkpoint.code));
   const selected = cards.find((c) => c.checkpoint.id === openId) ?? null;
   const answeredCount = cards.filter(isApproved).length;
-  const openCount = cards.length - answeredCount;
+  const needsAttention = (c: CheckpointCard) => !isApproved(c) || c.pending_proposal !== null;
+  const openCount = cards.filter(needsAttention).length;
   const criticalCount = cards.filter((c) => !isApproved(c) && c.chunk_count === 0).length;
   const percent = cards.length ? Math.round((answeredCount / cards.length) * 100) : 0;
-  const visible = filter === "open" ? cards.filter((c) => !isApproved(c)) : cards;
+  const visible = filter === "open" ? cards.filter(needsAttention) : cards;
 
   async function handleApprove(proposalId: number, text: string, proposedText: string) {
     const edited = text.trim() !== proposedText.trim();
@@ -157,7 +159,7 @@ export function UserDiscoveryChecklist({ projectId }: UserDiscoveryChecklistProp
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-caption font-semibold text-fg-muted">
-                      {card.checkpoint.code} · {approved ? "ANSWERED" : "OPEN"}
+                      {card.checkpoint.code} · {!approved ? "OPEN" : card.pending_proposal ? "NEW PROPOSAL" : "ANSWERED"}
                     </p>
                     <Badge tone={gap.tone} className="rounded-full px-3">
                       {gap.label}
@@ -185,7 +187,7 @@ export function UserDiscoveryChecklist({ projectId }: UserDiscoveryChecklistProp
 
                   <div className="mt-auto flex flex-wrap items-center gap-4 border-t border-border-disabled pt-4">
                     <Button variant="secondary" size="sm" onClick={() => setOpenId(card.checkpoint.id)}>
-                      {approved ? "View answer" : "Answer"}
+                      {card.pending_proposal ? "Review" : approved ? "View answer" : "Answer"}
                     </Button>
                   </div>
                 </article>

@@ -140,7 +140,12 @@ def _chunk_count(db: Session, project_id: int, statuses: tuple[str, ...]) -> int
     ) or 0
 
 
-def build_agent_batch(db: Session, project_id: int, checkpoint_ids: list[int] | None = None) -> AgentBatch | None:
+def build_agent_batch(
+    db: Session,
+    project_id: int,
+    checkpoint_ids: list[int] | None = None,
+    chunk_ids: set[int] | None = None,
+) -> AgentBatch | None:
     """
     One request for every active User checkpoint. Checkpoints with no mapped chunks are still
     sent, with an empty chunk list, so the agent can report what is missing.
@@ -149,12 +154,16 @@ def build_agent_batch(db: Session, project_id: int, checkpoint_ids: list[int] | 
     definitions = sorted(active_user_checkpoints(db).values(), key=lambda cp: (cp.sort_order, cp.id))
     if checkpoint_ids is not None:
         definitions = [cp for cp in definitions if cp.id in checkpoint_ids]
-    if not definitions:
-        return None
 
     evidence: dict[int, dict[int, dict]] = defaultdict(dict)
     for row in project_mapping_rows(db, project_id):
-        evidence[row["checkpoint_id"]].setdefault(row["chunk_id"], row)
+        if chunk_ids is None or row["chunk_id"] in chunk_ids:
+            evidence[row["checkpoint_id"]].setdefault(row["chunk_id"], row)
+
+    if chunk_ids is not None:
+        definitions = [cp for cp in definitions if cp.id in evidence]
+    if not definitions:
+        return None
 
     answers = current_answers(db, project_id, {cp.id for cp in definitions})
 
