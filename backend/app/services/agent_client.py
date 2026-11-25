@@ -15,6 +15,8 @@ import logging
 import socket
 import time
 from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
 from typing import TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -68,19 +70,54 @@ def call_helper_agent(payload: dict) -> dict:
     return _post(payload, "agent5i_agent_name", HELPER_REQUEST_PREFIX)
 
 
+BRD_INPUT_DIR = Path(__file__).resolve().parents[2] / "logs" / "brd_agent_inputs"
+BRD_REPLY_DIR = Path(__file__).resolve().parents[2] / "logs" / "brd_agent_replies"
+
+
+def _save_brd_input(text_input: str) -> None:
+    """Write the exact text sent to the BRD agent to a markdown file, so the payload can be read later."""
+    try:
+        BRD_INPUT_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        path = BRD_INPUT_DIR / f"{stamp}.md"
+        path.write_text(
+            f"# BRD agent input\n\nSent: {datetime.now().isoformat(timespec='seconds')}\n\n"
+            f"```text\n{text_input}\n```\n",
+            encoding="utf-8",
+        )
+        log.info("BRD agent input saved to %s", path)
+    except OSError:
+        log.exception("Could not save the BRD agent input")
+
+
 def call_brd_agent(text_input: str) -> dict:
     """
     BRD generation. The BRD agent reads one text input: the AGENT_REQUEST control block followed
     by the approved checkpoint answers (built by brd_service), so the text is sent as it is.
     """
+    _save_brd_input(text_input)
     settings = get_settings()
-    return _post_text(
+    reply = _post_text(
         text_input,
         agent_name=settings.brd_agent_name,
         username=settings.brd_agent5i_username or settings.agent5i_username,
         password=settings.brd_agent5i_password or settings.agent5i_password,
         timeout_seconds=settings.brd_timeout_seconds,
     )
+    _save_brd_reply(reply)
+    return reply
+
+
+def _save_brd_reply(reply: dict) -> None:
+    """Write the whole BRD agent reply to a file, so the complete response can be read later."""
+    try:
+        BRD_REPLY_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        path = BRD_REPLY_DIR / f"{stamp}.json"
+        path.write_text(json.dumps(reply, indent=2, ensure_ascii=False), encoding="utf-8")
+        log.info("BRD agent reply saved to %s", path)
+    except OSError:
+        log.exception("Could not save the BRD agent reply")
 
 
 def call_mom_agent(payload: dict) -> dict:
@@ -151,20 +188,28 @@ def _post_text(text_input: str, agent_name: str, username: str, password: str, t
     )
 
     timeout_message = f"Agent5i did not answer within {timeout_seconds} seconds."
+    log.info("Agent5i request -> %s (%d characters, timeout %ds)", agent_name, len(text_input), timeout_seconds)
+    started = time.monotonic()
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             raw = response.read()
     except HTTPError as exc:
         # HTTPError is a subclass of URLError, so it must be caught first.
+        log.warning("Agent5i error <- %s: HTTP %d after %.1fs", agent_name, exc.code, time.monotonic() - started)
         raise AgentHttpError(exc.code) from None
     except (TimeoutError, socket.timeout):
+        log.warning("Agent5i timeout <- %s after %.1fs", agent_name, time.monotonic() - started)
         raise AgentTimeoutError(timeout_message) from None
     except URLError as exc:
         if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            log.warning("Agent5i timeout <- %s after %.1fs", agent_name, time.monotonic() - started)
             raise AgentTimeoutError(timeout_message) from None
+        log.warning("Agent5i unreachable <- %s: %s", agent_name, type(exc.reason).__name__)
         raise AgentConnectionError("Agent5i could not be reached.") from None
 
+    log.info("Agent5i reply <- %s in %.1fs (%d bytes)", agent_name, time.monotonic() - started, len(raw))
     try:
         return json.loads(raw.decode("utf-8"))
     except ValueError:
+        log.warning("Agent5i reply from %s is not JSON", agent_name)
         raise AgentInvalidResponseError("Agent5i returned a body that is not JSON.") from None

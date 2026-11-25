@@ -43,5 +43,6 @@ export const API_PATHS = {
     minutes: "/api/mom/minutes",
     detailedSummary: "/api/mom/detailed-summary",
     download: "/api/mom/download",
+    attach: "/api/mom/attach",
   },
 } as const;

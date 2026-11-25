@@ -112,14 +112,14 @@ def save_owner_input(db: Session, owner_id: int, project_id: int, checkpoint_id:
     db.commit()
 
 
-def run_in_background(project_id: int, checkpoint_ids: list[int] | None) -> None:
+def run_in_background(project_id: int, checkpoint_ids: list[int] | None, chunk_ids: set[int] | None = None) -> None:
     lock = lock_for(project_id)
     if not lock.acquire(blocking=False):
         log.info("User Discovery run already in progress for project %s.", project_id)
         return
     try:
         with get_session_factory()() as db:
-            execute_run(db, project_id, checkpoint_ids)
+            execute_run(db, project_id, checkpoint_ids, chunk_ids=chunk_ids)
     except Exception:
         log.exception("User Discovery run crashed for project %s", project_id)
     finally:
@@ -150,8 +150,9 @@ def execute_run(
     project_id: int,
     checkpoint_ids: list[int] | None = None,
     agent_call=call_user_agent,
+    chunk_ids: set[int] | None = None,
 ) -> RunOutcome:
-    built = build_agent_batch(db, project_id, checkpoint_ids)
+    built = build_agent_batch(db, project_id, checkpoint_ids, chunk_ids)
     if built is None:
         return RunOutcome(status="nothing_to_run")
 
@@ -172,11 +173,30 @@ def execute_run(
     run_id = run.id
 
     raw_text: str | None = None
+    log.info(
+        "User Discovery run %s: sending %d checkpoint(s) with %d evidence chunk(s) [%s].",
+        run_id,
+        len(built.sent),
+        built.chunk_count,
+        ", ".join(item.code for item in built.sent),
+    )
     try:
         data = agent_call(built.payload)
         raw_text = json.dumps(data, ensure_ascii=False)
+        log.info("User Discovery run %s: agent responded for %d checkpoint(s).", run_id, len(built.sent))
         result = parse_proposals(final_output(data), built.sent)
-        return _store(db, project_id, run_id, built.sent, result, raw_text)
+        outcome = _store(db, project_id, run_id, built.sent, result, raw_text)
+        log.info(
+            "User Discovery run %s finished: %d proposal(s) stored [%s]; %d failed [%s].",
+            run_id,
+            len(outcome.processed),
+            ", ".join(item["checkpoint_code"] for item in outcome.processed) or "-",
+            len(outcome.failed),
+            "; ".join(f"{item['checkpoint_code']}: {item['error']}" for item in outcome.failed) or "-",
+        )
+        for warning in result.warnings:
+            log.info("User Discovery run %s warning: %s", run_id, warning)
+        return outcome
     except (AgentCallError, ContractError) as exc:
         log.warning("User Discovery run %s failed: %s", run_id, exc)
         return _fail_run(db, run_id, str(exc), built.sent, raw_text)

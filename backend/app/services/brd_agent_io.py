@@ -15,7 +15,7 @@ import json
 import re
 from typing import Any
 
-from app.services.agent_reply import find_json_object
+from app.services.agent_reply import find_json_objects
 
 MODE_GENERATE_ALL = "generate_all"
 MODE_REGENERATE_SECTION = "regenerate_section"
@@ -158,6 +158,18 @@ def _is_brd_object(value: dict) -> bool:
     return isinstance(value.get("questions"), list) and bool(value["questions"])
 
 
+def _usable_score(value: dict) -> tuple[int, int]:
+    """How much usable content a candidate BRD object holds: (complete sections, characters)."""
+    sections = value.get("sections") if isinstance(value.get("sections"), dict) else {}
+    complete = 0
+    characters = 0
+    for item in sections.values():
+        if isinstance(item, dict) and item.get("status") == "complete":
+            complete += 1
+            characters += len(str(item.get("content") or ""))
+    return complete, characters
+
+
 def normalize_agent_response(raw: Any, section_keys: list[str], mode: str, target_section: str = "") -> dict:
     """
     Every section key gets {"status", "content", "message", "questions"}:
@@ -166,9 +178,11 @@ def normalize_agent_response(raw: Any, section_keys: list[str], mode: str, targe
     - skipped      -> the agent left the section alone (single-section modes only)
     Raises AgentReplyError when the structured object is not in the reply.
     """
-    found = find_json_object(raw, _is_brd_object)
-    if found is None:
+    candidates = find_json_objects(raw, _is_brd_object)
+    if not candidates:
         raise AgentReplyError("The BRD agent's reply did not contain the structured BRD object.")
+    # A long reply can hold several BRD-shaped objects (intermediate steps too). Keep the richest one.
+    found = max(candidates, key=_usable_score)
 
     raw_sections = found.get("sections") if isinstance(found.get("sections"), dict) else {}
     sections: dict[str, dict] = {}

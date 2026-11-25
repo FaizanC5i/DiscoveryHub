@@ -81,6 +81,22 @@ def test_questions_only_reply_is_accepted_and_capped_at_three():
     assert result["questions"] == ["a", "b", "c"]
 
 
+def test_long_reply_with_an_earlier_insufficient_object_keeps_the_richest_one():
+    keys = ["business_objectives", "scope"]
+    early = {"mode": "generate_all", "sections": {k: {"status": "insufficient"} for k in keys}}
+    final = {
+        "mode": "generate_all",
+        "sections": {
+            "business_objectives": {"status": "complete", "content": "Reduce booking delays by half."},
+            "scope": {"status": "complete", "content": "Participant booking and reporting."},
+        },
+    }
+    reply = {"messages": [{"content": json.dumps(early)}, {"content": json.dumps(final)}]}
+    result = io.normalize_agent_response(reply, keys, io.MODE_GENERATE_ALL)
+    assert result["sections"]["business_objectives"]["status"] == "complete"
+    assert result["sections"]["scope"]["content"] == "Participant booking and reporting."
+
+
 def test_reply_without_the_brd_object_raises():
     with pytest.raises(io.AgentReplyError):
         io.normalize_agent_response({"output": "sorry, I cannot help"}, KEYS, io.MODE_GENERATE_ALL)

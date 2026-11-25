@@ -3,14 +3,18 @@ Meeting Minutes assistant endpoints. Each request carries the transcript and any
 needs, so the server keeps no state between requests. Every route requires a signed-in user.
 """
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+from sqlalchemy.orm import Session
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.api.routes.context import queue_source_mapping
 from app.core.errors import api_error
+from app.db.session import get_db
 from app.dependencies.auth import CurrentUser
+from app.services import context_service
 from app.services import mom_documents
 from app.services.agent_client import (
     AgentConfigurationError,
@@ -112,6 +116,44 @@ def generate_detailed(body: DetailedBody, user: CurrentUser) -> dict:
         "previous_mom": body.previous_mom,
     }
     return _call_agent(payload, "detailed-summary")
+
+
+class AttachBody(BaseModel):
+    project_ids: list[int] = Field(min_length=1, max_length=50)
+    document: Literal["mom", "detailed-summary"]
+    output: Any
+    project_name: str | None = None
+    source_name: str | None = None
+
+
+@router.post("/attach")
+def attach_to_projects(
+    body: AttachBody,
+    background: BackgroundTasks,
+    user: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Save the document as a note in each chosen project, so it joins the context library and mapping."""
+    if body.output is None:
+        raise api_error(422, "NOTHING_TO_ATTACH", "Generate this document first.")
+
+    body_part, project_title = unwrap_output(body.output)
+    document = mom_documents.build_document(
+        body.output, body_part, body.project_name or project_title, body.source_name, body.document
+    )
+    markdown = mom_documents.to_markdown(document)
+    title = f"{document['title']}: {document['project_name'] or 'Meeting'}"[:255]
+
+    results: list[dict] = []
+    for project_id in dict.fromkeys(body.project_ids):
+        try:
+            source = context_service.create_note(db, user, project_id, title, markdown)
+            queue_source_mapping(background, db, source)
+            results.append({"project_id": project_id, "ok": True, "source_id": source.id})
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            results.append({"project_id": project_id, "ok": False, "error": detail.get("message", "Could not attach.")})
+    return {"results": results}
 
 
 @router.post("/download")

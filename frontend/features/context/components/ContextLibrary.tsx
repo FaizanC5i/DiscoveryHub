@@ -3,7 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { CloseIcon } from "@/components/icons";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { YetToBeDone } from "@/components/ui/YetToBeDone";
+import { ProposedAnswersDialog } from "@/features/user-discovery/components/ProposedAnswersDialog";
+import { usePendingProposalCount } from "@/features/user-discovery/hooks/usePendingProposalCount";
 import { useLiveSources } from "../hooks/useLiveSources";
 import { useSourceSearch } from "../hooks/useSourceSearch";
 import { createNote } from "../services/contextService";
@@ -31,6 +35,8 @@ export function ContextLibrary({ projectId, sources: serverSources, onHide }: Co
   const { sources, addSaved } = useLiveSources(projectId, serverSources);
   const router = useRouter();
   const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
+  const [isProposalsOpen, setIsProposalsOpen] = useState(false);
+  const pendingCount = usePendingProposalCount(projectId);
   const [selectedNoteId, setSelectedNoteId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<SourceTypeFilter>("all");
@@ -68,7 +74,22 @@ export function ContextLibrary({ projectId, sources: serverSources, onHide }: Co
       </div>
 
       <div className="flex flex-col gap-2 rounded-card bg-page p-4">
-        <p className="text-body-small font-semibold text-fg">Discovery progress</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-body-small font-semibold text-fg">Discovery progress</p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setIsProposalsOpen(true)}
+            aria-label={`Proposed answers${pendingCount > 0 ? `, ${pendingCount} waiting for review` : ""}`}
+          >
+            Proposed answers
+            {pendingCount > 0 ? (
+              <Badge tone="brand" className="rounded-full px-2">
+                {pendingCount}
+              </Badge>
+            ) : null}
+          </Button>
+        </div>
         <YetToBeDone />
       </div>
 
@@ -99,6 +120,12 @@ export function ContextLibrary({ projectId, sources: serverSources, onHide }: Co
           onOpenNote={setSelectedNoteId}
         />
       </section>
+
+      <ProposedAnswersDialog
+        projectId={projectId}
+        open={isProposalsOpen}
+        onClose={() => setIsProposalsOpen(false)}
+      />
 
       <AddNoteDialog
         open={isNoteDialogOpen}
