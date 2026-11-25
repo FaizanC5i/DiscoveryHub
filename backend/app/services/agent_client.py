@@ -120,6 +120,40 @@ def _save_brd_reply(reply: dict) -> None:
         log.exception("Could not save the BRD agent reply")
 
 
+PRD_REQUEST_PREFIX = "PRD_REQUEST\n"
+PRD_INPUT_DIR = Path(__file__).resolve().parents[2] / "logs" / "prd_agent_inputs"
+PRD_REPLY_DIR = Path(__file__).resolve().parents[2] / "logs" / "prd_agent_replies"
+
+
+def call_prd_agent(payload: dict) -> dict:
+    """
+    PRD generation. The PRD Generation Agent reads one text input: "PRD_REQUEST", a new line, then
+    the request as JSON (built by prd_agent_io.build_payload). Input and reply are saved under logs/.
+    """
+    text_input = PRD_REQUEST_PREFIX + json.dumps(payload, ensure_ascii=False)
+    _save_log(PRD_INPUT_DIR, "json", text_input[len(PRD_REQUEST_PREFIX):])
+    settings = get_settings()
+    reply = _post_text(
+        text_input,
+        agent_name=settings.prd_agent_name,
+        username=settings.prd_agent5i_username or settings.agent5i_username,
+        password=settings.prd_agent5i_password or settings.agent5i_password,
+        timeout_seconds=settings.prd_timeout_seconds,
+    )
+    _save_log(PRD_REPLY_DIR, "json", json.dumps(reply, indent=2, ensure_ascii=False))
+    return reply
+
+
+def _save_log(folder: Path, extension: str, text: str) -> None:
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.{extension}"
+        path.write_text(text, encoding="utf-8")
+        log.info("Agent log saved to %s", path)
+    except OSError:
+        log.exception("Could not save the agent log in %s", folder)
+
+
 def call_mom_agent(payload: dict) -> dict:
     """Meeting minutes: the payload is sent as JSON text in source_files, as the agent expects."""
     settings = get_settings()

@@ -7,8 +7,9 @@ Analogy: the shop window. The BRD itself lives in the stock room (brd_service an
 this module arranges it the way the window is designed: bullets, badges, a banner and a
 version list. It adds no rules of its own: every change goes through brd_service.
 
-Only the BRD can be generated today. The other artifact types are listed (the picker shows
-them) but their draft routes answer 404 ARTIFACT_NOT_AVAILABLE.
+The BRD and the PRD can be generated (both through brd_service, with code="BRD" or "PRD").
+The other artifact types are listed (the picker shows them) but their draft routes answer
+404 ARTIFACT_NOT_AVAILABLE.
 """
 
 import io as _io
@@ -47,7 +48,8 @@ ARTIFACT_CATALOG = [
     {"code": "NFR", "name": "NFR", "description": "Non-functional requirements and targets"},
 ]
 AUDIENCES = ["Executive sponsor", "Project owner", "Delivery team", "End users"]
-GENERATED_CODES = {"BRD"}
+GENERATED_CODES = {"BRD", "PRD"}
+NAMES = {"BRD": "Business Requirements Document", "PRD": "Product Requirements Document"}
 DEFAULT_MISSING_REASON = "No approved answer covers this section yet."
 EXPORT_FORMATS = {"md", "docx", "pdf"}
 
@@ -125,10 +127,10 @@ def studio_data(db: Session, owner_id: int, project_id: int) -> dict:
 
 def generate(db: Session, owner_id: int, project_id: int, code: str, config: dict) -> int:
     """POST /api/projects/{id}/artifacts/{code}/generate  body {title, audience, scope}"""
-    _require_generated(code)
+    code = _require_generated(code)
     if config.get("audience") and config["audience"] not in AUDIENCES:
         raise api_error(422, "UNKNOWN_AUDIENCE", f"Audience must be one of: {', '.join(AUDIENCES)}")
-    return brd_service.start_generate(db, owner_id, project_id, config)
+    return brd_service.start_generate(db, owner_id, project_id, config, code=code)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -138,11 +140,11 @@ def generate(db: Session, owner_id: int, project_id: int, code: str, config: dic
 
 def draft(db: Session, owner_id: int, project_id: int, code: str) -> dict:
     """GET /api/projects/{id}/artifacts/{code}"""
-    _require_generated(code)
+    code = _require_generated(code)
     project = _owned_project(db, owner_id, project_id)
-    brd = brd_service.get_brd(db, owner_id, project_id)
-    artifact = _artifact(db, project_id)
-    pillar_ids = brd_service._brd_pillar_ids(db)  # noqa: SLF001 - same package, one source of truth
+    brd = brd_service.get_brd(db, owner_id, project_id, code)
+    artifact = _artifact(db, project_id, code)
+    pillar_ids = brd_service._brd_pillar_ids(db, code)  # noqa: SLF001 - same package, one source of truth
 
     run = brd["latest_run"]
     sections = []
@@ -176,8 +178,8 @@ def draft(db: Session, owner_id: int, project_id: int, code: str) -> dict:
         status = "In Progress"
 
     return {
-        "artifactCode": "BRD",
-        "artifactName": "Business Requirements Document",
+        "artifactCode": code,
+        "artifactName": NAMES[code],
         "title": (artifact.title if artifact and artifact.title else project.name),
         "description": project.description or "",
         "status": status,
@@ -190,7 +192,9 @@ def draft(db: Session, owner_id: int, project_id: int, code: str) -> dict:
         "scope": artifact.scope if artifact else None,
         "isOutdated": brd["is_outdated"],
         # Answers approved since the BRD was last generated (shown next to the Refresh button).
-        "newAnswerCount": brd_service.answers_approved_since(db, project_id, brd["answers_as_of"]) if brd["is_outdated"] else 0,
+        "newAnswerCount": (
+            brd_service.answers_approved_since(db, project_id, brd["answers_as_of"], code) if brd["is_outdated"] else 0
+        ),
         "latestRun": brd["latest_run"],
     }
 
@@ -200,28 +204,28 @@ def save_section(
     bullets: list[str] | None = None, content: str | None = None,
 ) -> dict:
     """PUT /api/projects/{id}/artifacts/{code}/sections/{sectionId}  body {content} (Markdown) or {bullets}"""
-    _require_generated(code)
+    code = _require_generated(code)
     content = (content or "").strip() or bullets_to_markdown(bullets or [])
     if not content:
         raise api_error(422, "EMPTY_CONTENT", "Add at least one bullet point")
-    brd_service.edit_section(db, owner_id, project_id, section_id, content)
-    return _one_section(db, owner_id, project_id, section_id)
+    brd_service.edit_section(db, owner_id, project_id, section_id, content, code)
+    return _one_section(db, owner_id, project_id, section_id, code)
 
 
 def refresh(db: Session, owner_id: int, project_id: int, code: str) -> int:
     """POST /api/projects/{id}/artifacts/{code}/refresh: rewrite the BRD from all approved answers + current text."""
-    _require_generated(code)
-    return brd_service.start_refresh(db, owner_id, project_id)
+    code = _require_generated(code)
+    return brd_service.start_refresh(db, owner_id, project_id, code)
 
 
 def regenerate_section(db: Session, owner_id: int, project_id: int, code: str, section_id: str, answers: list[dict]) -> int:
-    _require_generated(code)
-    return brd_service.start_regenerate(db, owner_id, project_id, section_id, answers)
+    code = _require_generated(code)
+    return brd_service.start_regenerate(db, owner_id, project_id, section_id, answers, code)
 
 
 def clarify_section(db: Session, owner_id: int, project_id: int, code: str, section_id: str) -> int:
-    _require_generated(code)
-    return brd_service.start_clarify(db, owner_id, project_id, section_id)
+    code = _require_generated(code)
+    return brd_service.start_clarify(db, owner_id, project_id, section_id, code)
 
 
 def save_version(db: Session, owner_id: int, project_id: int, code: str) -> dict:
@@ -230,8 +234,8 @@ def save_version(db: Session, owner_id: int, project_id: int, code: str) -> dict
     The previous version moves to the versions table; the drafts on screen become the current
     content (see brd_service.save_new_version).
     """
-    _require_generated(code)
-    saved = brd_service.save_new_version(db, owner_id, project_id)
+    code = _require_generated(code)
+    saved = brd_service.save_new_version(db, owner_id, project_id, code=code)
     return {"versionNumber": saved["version_number"], "label": _version_label(saved["approved_at"])}
 
 
@@ -247,6 +251,7 @@ def export(
     if fmt not in EXPORT_FORMATS:
         raise api_error(422, "UNKNOWN_FORMAT", "format must be md, docx or pdf")
     current = draft(db, owner_id, project_id, code)
+    code = current["artifactCode"]
     sources = _source_titles(db, project_id) if include_sources else []
     doc = _export_model(current, sources, include_questions)
     base = f"{code.lower()}-draft"
@@ -383,9 +388,12 @@ def _export_pdf(doc: dict) -> bytes:
 # ---------------------------------------------------------------------------------------------
 
 
-def _require_generated(code: str) -> None:
-    if code.upper() not in GENERATED_CODES:
-        raise api_error(404, "ARTIFACT_NOT_AVAILABLE", f"{code.upper()} cannot be generated yet. Only the BRD is available.")
+def _require_generated(code: str) -> str:
+    """The artifact code in capitals, when it can be generated."""
+    code = code.upper()
+    if code not in GENERATED_CODES:
+        raise api_error(404, "ARTIFACT_NOT_AVAILABLE", f"{code} cannot be generated yet. Only the BRD and PRD are available.")
+    return code
 
 
 def _owned_project(db: Session, owner_id: int, project_id: int) -> Project:
@@ -395,11 +403,11 @@ def _owned_project(db: Session, owner_id: int, project_id: int) -> Project:
     return project
 
 
-def _artifact(db: Session, project_id: int) -> ProjectArtifact | None:
+def _artifact(db: Session, project_id: int, code: str) -> ProjectArtifact | None:
     return db.scalar(
         select(ProjectArtifact)
         .join(ArtifactType, ArtifactType.id == ProjectArtifact.artifact_type_id)
-        .where(ProjectArtifact.project_id == project_id, ArtifactType.code == "BRD")
+        .where(ProjectArtifact.project_id == project_id, ArtifactType.code == code)
     )
 
 
@@ -429,11 +437,11 @@ def _draft_section(s: dict) -> dict:
     return out
 
 
-def _one_section(db: Session, owner_id: int, project_id: int, section_id: str) -> dict:
-    for s in brd_service.get_brd(db, owner_id, project_id)["sections"]:
+def _one_section(db: Session, owner_id: int, project_id: int, section_id: str, code: str) -> dict:
+    for s in brd_service.get_brd(db, owner_id, project_id, code)["sections"]:
         if s["section_key"] == section_id:
             return _draft_section(s)
-    raise api_error(404, "SECTION_NOT_FOUND", "BRD section not found")
+    raise api_error(404, "SECTION_NOT_FOUND", f"{code} section not found")
 
 
 def _generation_snapshot(db: Session, artifact: ProjectArtifact | None) -> dict | None:

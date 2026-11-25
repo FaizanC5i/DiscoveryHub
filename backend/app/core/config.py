@@ -122,6 +122,16 @@ class Settings(BaseSettings):
     # (every automatic run costs a full agent call). On: regenerate after each approved answer.
     brd_auto_refresh: bool = False
 
+    # --- Agent5i PRD agent (PRD generation from approved User + Tech Discovery answers) --
+    # Same webhook. PRD_AGENT5I_USERNAME / PRD_AGENT5I_PASSWORD empty means "use the AGENT5I_* login".
+    prd_agent_name: str = "PRD Generation Agent"
+    prd_agent5i_username: str = ""
+    prd_agent5i_password: str = ""
+    # One call writes up to 3 sections (prd_batch_size); prd_parallel_calls calls run at once.
+    prd_timeout_seconds: int = 300
+    prd_batch_size: int = 3
+    prd_parallel_calls: int = 3
+
     @field_validator("jwt_secret_key")
     @classmethod
     def _secret_must_be_strong(cls, value: str) -> str:

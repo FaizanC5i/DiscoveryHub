@@ -18,3 +18,7 @@ node_modules/
 Thumbs.db
 .idea/
 .vscode/
+
+# PRD agent request/reply logs (contain client text)
+backend/logs/prd_agent_inputs/
+backend/logs/prd_agent_replies/

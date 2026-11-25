@@ -23,6 +23,9 @@ Analogy: a ghost writer. The writer only sees the binder of approved answers, dr
 chapter on a separate sheet (a proposal), and the author decides which sheet goes into the book
 (project_artifact_sections). The writer never writes in the book directly.
 
+The PRD uses the same functions (code="PRD"): same tables, same flow, different sections and
+agent. Only the agent calls differ; they live in prd_runs.py.
+
 Correctness:
 - The agent never overwrites approved content. Its output is always a proposal.
 - A newer proposal for a section supersedes the older open ones, so a section has at most one
@@ -65,12 +68,15 @@ from app.db.models import (
 from app.db.session import get_session_factory
 from app.services import artifact_readiness
 from app.services import brd_agent_io as io
+from app.services import prd_agent_io as prd_io
 from app.services.agent_client import AgentError, call_brd_agent, call_with_retry
 
 log = logging.getLogger(__name__)
 
 ARTIFACT_CODE = "BRD"
 BRD_AGENT_CODE = "BRD_AGENT"
+# The artifact types this module runs, and the agent (agents.agent_code) that writes each one.
+AGENT_CODES = {"BRD": "BRD_AGENT", "PRD": "PRD_AGENT"}
 RUN_GENERATE = "brd_generate"
 RUN_REGENERATE = "brd_regenerate"
 RUN_CLARIFY = "brd_clarify"
@@ -103,10 +109,10 @@ def _owned_project(db: Session, owner_id: int, project_id: int) -> Project:
     return project
 
 
-def _brd_type(db: Session) -> ArtifactType:
-    artifact_type = db.scalar(select(ArtifactType).where(ArtifactType.code == ARTIFACT_CODE))
+def _brd_type(db: Session, code: str = ARTIFACT_CODE) -> ArtifactType:
+    artifact_type = db.scalar(select(ArtifactType).where(ArtifactType.code == code))
     if artifact_type is None:
-        raise api_error(500, "BRD_NOT_CONFIGURED", "The BRD template is missing. Run the database migrations.")
+        raise api_error(500, f"{code}_NOT_CONFIGURED", f"The {code} template is missing. Run the database migrations.")
     return artifact_type
 
 
@@ -120,11 +126,20 @@ def _template(db: Session, artifact_type_id: int) -> list[ArtifactSection]:
     )
 
 
-def _brd_agent_id(db: Session) -> int:
-    agent_id = db.scalar(select(Agent.id).where(Agent.agent_code == BRD_AGENT_CODE))
+def _brd_agent_id(db: Session, code: str = ARTIFACT_CODE) -> int:
+    agent_id = db.scalar(select(Agent.id).where(Agent.agent_code == AGENT_CODES[code]))
     if agent_id is None:
-        raise BrdRunError("The BRD agent is not configured. Run the database migrations.")
+        raise BrdRunError(f"The {code} agent is not configured. Run the database migrations.")
     return agent_id
+
+
+def _code_of(db: Session, artifact_id: int) -> str:
+    """The artifact type code (BRD, PRD) of a project artifact."""
+    return db.scalar(
+        select(ArtifactType.code)
+        .join(ProjectArtifact, ProjectArtifact.artifact_type_id == ArtifactType.id)
+        .where(ProjectArtifact.id == artifact_id)
+    )
 
 
 def _find_brd(db: Session, project_id: int, artifact_type_id: int) -> ProjectArtifact | None:
@@ -135,9 +150,9 @@ def _find_brd(db: Session, project_id: int, artifact_type_id: int) -> ProjectArt
     )
 
 
-def _get_or_create_brd(db: Session, project_id: int, user_id: int) -> ProjectArtifact:
-    """The project's BRD, with one section row per template section. Creates what is missing."""
-    artifact_type = _brd_type(db)
+def _get_or_create_brd(db: Session, project_id: int, user_id: int, code: str = ARTIFACT_CODE) -> ProjectArtifact:
+    """The project's BRD (or PRD), with one section row per template section. Creates what is missing."""
+    artifact_type = _brd_type(db, code)
     artifact = _find_brd(db, project_id, artifact_type.id)
     if artifact is None:
         artifact = ProjectArtifact(project_id=project_id, artifact_type_id=artifact_type.id, created_by=user_id)
@@ -189,21 +204,24 @@ def _feeding_checkpoint_ids(db: Session, artifact_section_id: int) -> set[int] |
     return ids or None
 
 
-def _brd_pillar_ids(db: Session) -> set[int]:
+def _brd_pillar_ids(db: Session, code: str = ARTIFACT_CODE) -> set[int]:
     """The pillars whose answers the BRD is written from (artifact_type_pillars). User Discovery today.
     Read once per session (one request or one job): it is configuration and many helpers need it."""
-    if "brd_pillar_ids" not in db.info:
-        db.info["brd_pillar_ids"] = set(
+    cache_key = f"pillar_ids:{code}"
+    if cache_key not in db.info:
+        db.info[cache_key] = set(
             db.scalars(
                 select(ArtifactTypePillar.pillar_id)
                 .join(ArtifactType, ArtifactType.id == ArtifactTypePillar.artifact_type_id)
-                .where(ArtifactType.code == ARTIFACT_CODE)
+                .where(ArtifactType.code == code)
             )
         )
-    return db.info["brd_pillar_ids"]
+    return db.info[cache_key]
 
 
-def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | None = None) -> list[dict]:
+def approved_answers(
+    db: Session, project_id: int, checkpoint_ids: set[int] | None = None, code: str = ARTIFACT_CODE
+) -> list[dict]:
     """
     The project's APPROVED answers (approved_at is set and the answer is not empty) of the BRD's
     pillars, ordered by pillar and checkpoint. Limited to checkpoint_ids when given.
@@ -216,6 +234,9 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
             DiscoveryCheckpoint.question,
             ProjectCheckpointAnswer.current_answer,
             ProjectCheckpointAnswer.approved_at,
+            DiscoveryPillar.code,
+            DiscoveryCheckpoint.id,
+            DiscoveryCheckpoint.description,
         )
         .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
         .join(DiscoveryPillar, DiscoveryPillar.id == DiscoveryCheckpoint.pillar_id)
@@ -223,20 +244,21 @@ def approved_answers(db: Session, project_id: int, checkpoint_ids: set[int] | No
             ProjectCheckpointAnswer.project_id == project_id,
             ProjectCheckpointAnswer.approved_at.is_not(None),
             ProjectCheckpointAnswer.current_answer.is_not(None),
-            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db, code)),
         )
         .order_by(DiscoveryPillar.id, DiscoveryCheckpoint.sort_order, DiscoveryCheckpoint.code)
     )
     if checkpoint_ids is not None:
         query = query.where(ProjectCheckpointAnswer.checkpoint_id.in_(checkpoint_ids))
     return [
-        {"code": code, "name": name, "pillar": pillar, "question": question, "answer": answer, "approved_at": approved_at}
-        for code, name, pillar, question, answer, approved_at in db.execute(query).all()
+        {"code": cp_code, "name": name, "pillar": pillar, "question": question, "answer": answer,
+         "approved_at": approved_at, "pillar_code": pillar_code, "checkpoint_id": cp_id, "description": description}
+        for cp_code, name, pillar, question, answer, approved_at, pillar_code, cp_id, description in db.execute(query).all()
         if answer and answer.strip()
     ]
 
 
-def approved_answer_count(db: Session, project_id: int) -> int:
+def approved_answer_count(db: Session, project_id: int, code: str = ARTIFACT_CODE) -> int:
     """How many BRD input answers are approved, without downloading their text."""
     return db.scalar(
         select(func.count())
@@ -246,12 +268,12 @@ def approved_answer_count(db: Session, project_id: int) -> int:
             ProjectCheckpointAnswer.project_id == project_id,
             ProjectCheckpointAnswer.approved_at.is_not(None),
             func.len(func.ltrim(ProjectCheckpointAnswer.current_answer)) > 0,
-            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db, code)),
         )
     ) or 0
 
 
-def latest_approval(db: Session, project_id: int):
+def latest_approval(db: Session, project_id: int, code: str = ARTIFACT_CODE):
     """When the newest BRD input answer was approved (None when nothing is approved)."""
     return db.scalar(
         select(func.max(ProjectCheckpointAnswer.approved_at))
@@ -259,7 +281,7 @@ def latest_approval(db: Session, project_id: int):
         .where(
             ProjectCheckpointAnswer.project_id == project_id,
             ProjectCheckpointAnswer.current_answer.is_not(None),
-            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db, code)),
         )
     )
 
@@ -279,8 +301,8 @@ def _answers_as_of(db: Session, artifact_id: int):
     return datetime.fromisoformat(value) if value else None
 
 
-def _is_outdated(db: Session, project_id: int, artifact: ProjectArtifact | None) -> bool:
-    newest = latest_approval(db, project_id)
+def _is_outdated(db: Session, project_id: int, artifact: ProjectArtifact | None, code: str = ARTIFACT_CODE) -> bool:
+    newest = latest_approval(db, project_id, code)
     if newest is None:
         return False
     as_of = _answers_as_of(db, artifact.id) if artifact else None
@@ -337,42 +359,46 @@ def _fallback_questions(section: ArtifactSection) -> list[str]:
 # ---------------------------------------------------------------------------------------------
 
 
-def start_generate(db: Session, owner_id: int, project_id: int, settings: dict | None = None) -> int:
+def start_generate(
+    db: Session, owner_id: int, project_id: int, settings: dict | None = None, code: str = ARTIFACT_CODE
+) -> int:
     """settings: the "Configure the draft" form ({title, audience, scope}); kept for later runs too."""
     _owned_project(db, owner_id, project_id)
-    if not approved_answers(db, project_id):
-        raise api_error(
-            409, "NO_APPROVED_ANSWERS", "The BRD is written from approved checkpoint answers. None are approved yet."
-        )
-    artifact = _get_or_create_brd(db, project_id, owner_id)
+    _require_answers(db, project_id, code)
+    artifact = _get_or_create_brd(db, project_id, owner_id, code)
     if settings is not None:
         artifact.title = (settings.get("title") or "").strip()[:255] or None
         artifact.audience = (settings.get("audience") or "").strip()[:100] or None
         artifact.scope = (settings.get("scope") or "").strip()[:1000] or None
-    return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL})
+    return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL}, code)
 
 
-def start_refresh(db: Session, owner_id: int, project_id: int) -> int:
+def start_refresh(db: Session, owner_id: int, project_id: int, code: str = ARTIFACT_CODE) -> int:
     """
     Refresh: rewrite the whole BRD from ALL approved User Discovery answers (old and newly approved),
     sending the current BRD text with them so the agent updates it instead of starting again.
     The new text arrives as drafts; the current content stays until "Save new version".
     """
     _owned_project(db, owner_id, project_id)
-    if not approved_answers(db, project_id):
+    _require_answers(db, project_id, code)
+    artifact = _get_or_create_brd(db, project_id, owner_id, code)
+    return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL, "trigger": TRIGGER_REFRESH}, code)
+
+
+def _require_answers(db: Session, project_id: int, code: str) -> None:
+    if not approved_answers(db, project_id, code=code):
         raise api_error(
-            409, "NO_APPROVED_ANSWERS", "The BRD is written from approved checkpoint answers. None are approved yet."
+            409, "NO_APPROVED_ANSWERS", f"The {code} is written from approved checkpoint answers. None are approved yet."
         )
-    artifact = _get_or_create_brd(db, project_id, owner_id)
-    return _new_run(db, artifact, None, RUN_GENERATE, {"mode": io.MODE_GENERATE_ALL, "trigger": TRIGGER_REFRESH})
 
 
 def start_regenerate(
-    db: Session, owner_id: int, project_id: int, section_key: str, answers: list[dict] | None = None
+    db: Session, owner_id: int, project_id: int, section_key: str, answers: list[dict] | None = None,
+    code: str = ARTIFACT_CODE,
 ) -> int:
     """Save the user's new clarification answers (if any), then queue a rewrite of one section."""
     _owned_project(db, owner_id, project_id)
-    artifact = _get_or_create_brd(db, project_id, owner_id)
+    artifact = _get_or_create_brd(db, project_id, owner_id, code)
     section = _section_by_key(db, artifact.id, section_key)
     _ensure_no_running_run(db, artifact.id)
 
@@ -391,7 +417,7 @@ def start_regenerate(
             )
         db.flush()
 
-    has_answers = bool(approved_answers(db, project_id, _feeding_checkpoint_ids(db, section.artifact_section_id)))
+    has_answers = bool(approved_answers(db, project_id, _feeding_checkpoint_ids(db, section.artifact_section_id), code))
     if not (has_answers or section.current_content or _clarification_pairs(db, section)):
         db.rollback()
         raise api_error(
@@ -399,14 +425,17 @@ def start_regenerate(
             "NOTHING_TO_WRITE_FROM",
             "No approved answer feeds this section and it has no content or clarifications yet. Use Clarify first.",
         )
-    return _new_run(db, artifact, section, RUN_REGENERATE, {"mode": io.MODE_REGENERATE_SECTION, "section": section_key})
+    return _new_run(
+        db, artifact, section, RUN_REGENERATE,
+        {"mode": io.MODE_REGENERATE_SECTION, "section": section_key, "new_answers": bool(answers)}, code,
+    )
 
 
-def start_clarify(db: Session, owner_id: int, project_id: int, section_key: str) -> int:
+def start_clarify(db: Session, owner_id: int, project_id: int, section_key: str, code: str = ARTIFACT_CODE) -> int:
     _owned_project(db, owner_id, project_id)
-    artifact = _get_or_create_brd(db, project_id, owner_id)
+    artifact = _get_or_create_brd(db, project_id, owner_id, code)
     section = _section_by_key(db, artifact.id, section_key)
-    return _new_run(db, artifact, section, RUN_CLARIFY, {"mode": io.MODE_CLARIFY_QUESTIONS, "section": section_key})
+    return _new_run(db, artifact, section, RUN_CLARIFY, {"mode": io.MODE_CLARIFY_QUESTIONS, "section": section_key}, code)
 
 
 def _ensure_no_running_run(db: Session, artifact_id: int) -> None:
@@ -419,7 +448,7 @@ def _ensure_no_running_run(db: Session, artifact_id: int) -> None:
         )
     )
     if running is not None:
-        raise api_error(409, "BRD_RUN_IN_PROGRESS", "The BRD agent is already working on this BRD. Please wait.")
+        raise api_error(409, "BRD_RUN_IN_PROGRESS", "The agent is already working on this document. Please wait.")
 
 
 def _new_run(
@@ -428,12 +457,13 @@ def _new_run(
     section: ProjectArtifactSection | None,
     run_type: str,
     input_payload: dict,
+    code: str = ARTIFACT_CODE,
 ) -> int:
     _close_stale_runs(db, artifact.id)
     _ensure_no_running_run(db, artifact.id)
     run = AgentRun(
         project_id=artifact.project_id,
-        agent_id=_brd_agent_id(db),
+        agent_id=_brd_agent_id(db, code),
         run_type=run_type,
         status="running",
         chunk_count=0,
@@ -448,7 +478,7 @@ def _new_run(
     except IntegrityError:
         # ux_agent_runs_one_running_artifact: another request started a run a moment ago.
         db.rollback()
-        raise api_error(409, "BRD_RUN_IN_PROGRESS", "The BRD agent is already working on this BRD. Please wait.") from None
+        raise api_error(409, "BRD_RUN_IN_PROGRESS", "The agent is already working on this document. Please wait.") from None
     return run.id
 
 
@@ -502,21 +532,30 @@ def refresh_brd(project_id: int, _chain: int = 0) -> None:
 
 
 def run_brd_job(agent_run_id: int, _chain: int = 0) -> None:
-    """Run one queued BRD run. Never raises: a failure is recorded on the run."""
+    """Run one queued BRD or PRD run. Never raises: a failure is recorded on the run."""
     project_id = None
+    code = None
     try:
         with get_session_factory()() as db:
             run = db.get(AgentRun, agent_run_id)
             if run is None or run.status != "running":
                 return
             project_id = run.project_id
-            handlers = {RUN_GENERATE: _run_generate, RUN_REGENERATE: _run_regenerate, RUN_CLARIFY: _run_clarify}
+            code = _code_of(db, run.project_artifact_id)
+            if code == "PRD":
+                from app.services import prd_runs  # noqa: PLC0415 - prd_runs imports this module
+
+                handlers = {RUN_GENERATE: prd_runs.run_generate, RUN_REGENERATE: prd_runs.run_regenerate,
+                            RUN_CLARIFY: prd_runs.run_clarify}
+            else:
+                handlers = {RUN_GENERATE: _run_generate, RUN_REGENERATE: _run_regenerate, RUN_CLARIFY: _run_clarify}
             handlers[run.run_type](db, run)
     except Exception as exc:  # noqa: BLE001 - recorded on the run, never lost
         _record_failure(agent_run_id, exc)
         return
-    # Answers approved while this run was busy: write the BRD once more with them.
-    refresh_brd(project_id, _chain)
+    # Answers approved while this run was busy: write the BRD once more with them (BRD only).
+    if code == ARTIFACT_CODE:
+        refresh_brd(project_id, _chain)
 
 
 def _call_and_parse(text_input: str, section_keys: list[str], mode: str, target: str) -> tuple[dict, int]:
@@ -619,7 +658,7 @@ def _current_brd_block(sections: list[ProjectArtifactSection], text: dict[int, s
     )
 
 
-def answers_approved_since(db: Session, project_id: int, since) -> int:
+def answers_approved_since(db: Session, project_id: int, since, code: str = ARTIFACT_CODE) -> int:
     """How many BRD input answers were approved after `since` (all approved ones when since is None)."""
     query = (
         select(func.count())
@@ -628,7 +667,7 @@ def answers_approved_since(db: Session, project_id: int, since) -> int:
         .where(
             ProjectCheckpointAnswer.project_id == project_id,
             ProjectCheckpointAnswer.approved_at.is_not(None),
-            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db)),
+            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db, code)),
         )
     )
     if since is not None:
@@ -791,8 +830,8 @@ def _record_failure(agent_run_id: int, exc: Exception) -> None:
     if isinstance(exc, (BrdRunError, AgentError)):
         message = str(exc)
         log.warning("BRD run %s failed: %s", agent_run_id, message)
-    elif isinstance(exc, io.AgentReplyError):
-        message = "The BRD agent's reply could not be read. Please try again."
+    elif isinstance(exc, (io.AgentReplyError, prd_io.PrdReplyError)):
+        message = "The agent's reply could not be read. Please try again."
         log.warning("BRD run %s failed: %s", agent_run_id, exc)
     else:
         message = GENERIC_FAILURE
@@ -814,13 +853,13 @@ def _record_failure(agent_run_id: int, exc: Exception) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
-    """The BRD with every section, its open proposal and saved clarifications, and the latest run."""
+def get_brd(db: Session, owner_id: int, project_id: int, code: str = ARTIFACT_CODE) -> dict:
+    """The BRD (or PRD) with every section, its open proposal and saved clarifications, and the latest run."""
     _owned_project(db, owner_id, project_id)
-    artifact_type = _brd_type(db)
+    artifact_type = _brd_type(db, code)
     artifact = _find_brd(db, project_id, artifact_type.id)
     feeds = _feeds_by_section(db, artifact_type.id)
-    approved_count = approved_answer_count(db, project_id)
+    approved_count = approved_answer_count(db, project_id, code)
 
     if artifact is None:
         return {
@@ -828,7 +867,7 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
             "status": "NOT_STARTED",
             "current_version": 0,
             "approved_answer_count": approved_count,
-            "is_outdated": _is_outdated(db, project_id, None),
+            "is_outdated": _is_outdated(db, project_id, None, code),
             "answers_as_of": None,
             "sections": [
                 _section_dict(None, template, feeds.get(template.id, []), None, []) for template in _template(db, artifact_type.id)
@@ -877,7 +916,7 @@ def get_brd(db: Session, owner_id: int, project_id: int) -> dict:
         "status": artifact.status,
         "current_version": artifact.current_version,
         "approved_answer_count": approved_count,
-        "is_outdated": _is_outdated(db, project_id, artifact),
+        "is_outdated": _is_outdated(db, project_id, artifact, code),
         "answers_as_of": _answers_as_of(db, artifact.id),
         "sections": sections,
         "latest_run": _run_dict(db, latest) if latest else None,
@@ -898,13 +937,15 @@ def get_run(db: Session, owner_id: int, project_id: int, agent_run_id: int) -> d
     return _run_dict(db, run)
 
 
-def edit_section(db: Session, owner_id: int, project_id: int, section_key: str, content: str) -> dict:
+def edit_section(
+    db: Session, owner_id: int, project_id: int, section_key: str, content: str, code: str = ARTIFACT_CODE
+) -> dict:
     """The user's own text becomes the approved content of the section."""
     _owned_project(db, owner_id, project_id)
     content = io.clean_text(content)
     if not content:
         raise api_error(422, "EMPTY_CONTENT", "Section content cannot be empty")
-    artifact = _get_or_create_brd(db, project_id, owner_id)
+    artifact = _get_or_create_brd(db, project_id, owner_id, code)
     section = _section_by_key(db, artifact.id, section_key)
     now = utc_now()
     for old in db.scalars(
@@ -948,7 +989,9 @@ def reject_proposal(db: Session, owner_id: int, project_id: int, proposal_id: in
     return _section_after_change(db, section)
 
 
-def save_new_version(db: Session, owner_id: int, project_id: int, approve: bool = False) -> dict:
+def save_new_version(
+    db: Session, owner_id: int, project_id: int, approve: bool = False, code: str = ARTIFACT_CODE
+) -> dict:
     """
     Save the BRD as a new version. Like the checkpoint answers, the CURRENT version always lives in
     project_artifact_sections and project_artifact_versions holds only OLDER versions:
@@ -959,9 +1002,9 @@ def save_new_version(db: Session, owner_id: int, project_id: int, approve: bool 
     approve=True also marks the BRD APPROVED (the "Approve BRD" action).
     """
     _owned_project(db, owner_id, project_id)
-    artifact = _find_brd(db, project_id, _brd_type(db).id)
+    artifact = _find_brd(db, project_id, _brd_type(db, code).id)
     if artifact is None:
-        raise api_error(404, "BRD_NOT_FOUND", "This project has no BRD yet")
+        raise api_error(404, f"{code}_NOT_FOUND", f"This project has no {code} yet")
     rows = _section_rows(db, artifact.id)
     drafts: dict[int, ArtifactSectionProposal] = {}
     for proposal in db.scalars(
@@ -975,7 +1018,7 @@ def save_new_version(db: Session, owner_id: int, project_id: int, approve: bool 
         if proposal.proposed_content:
             drafts[proposal.project_artifact_section_id] = proposal  # newest wins
     if not drafts and not any(row.current_content for row in rows):
-        raise api_error(409, "NOTHING_TO_SAVE", "Generate the BRD before saving a version")
+        raise api_error(409, "NOTHING_TO_SAVE", f"Generate the {code} before saving a version")
 
     now = utc_now()
     # 1. The version being replaced goes to the versions table (it holds older versions only).

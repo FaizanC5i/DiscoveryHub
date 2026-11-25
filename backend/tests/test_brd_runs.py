@@ -28,7 +28,7 @@ class _Session:
 
 def test_second_run_at_the_same_moment_is_a_409(monkeypatch):
     monkeypatch.setattr(brd_service, "_ensure_no_running_run", lambda db, artifact_id: None)
-    monkeypatch.setattr(brd_service, "_brd_agent_id", lambda db: 1)
+    monkeypatch.setattr(brd_service, "_brd_agent_id", lambda db, code="BRD": 1)
     db = _Session()
     artifact = SimpleNamespace(id=4, project_id=504)
 
