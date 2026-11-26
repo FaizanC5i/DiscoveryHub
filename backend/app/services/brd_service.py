@@ -41,7 +41,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, true, update
+from sqlalchemy import case, event, func, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, defer, joinedload
 
@@ -102,15 +102,35 @@ class BrdRunError(Exception):
 # ---------------------------------------------------------------------------------------------
 
 
+# Rows read once per request: a page asks for the same project, artifact or last run several times,
+# and each read is a network round trip. Kept in db.info until the next commit or rollback.
+_CACHE = "read_once"
+
+
+def _once(db: Session, key: tuple, load):
+    cache = db.info.setdefault(_CACHE, {})
+    if key not in cache:
+        cache[key] = load()
+    return cache[key]
+
+
+@event.listens_for(Session, "after_commit")
+@event.listens_for(Session, "after_rollback")
+def _forget_reads(session: Session) -> None:
+    session.info.pop(_CACHE, None)
+
+
 def _owned_project(db: Session, owner_id: int, project_id: int) -> Project:
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.owner_id == owner_id))
+    project = _once(db, ("project", owner_id, project_id), lambda: db.scalar(
+        select(Project).where(Project.id == project_id, Project.owner_id == owner_id)
+    ))
     if project is None:
         raise api_error(404, "PROJECT_NOT_FOUND", "Project not found")
     return project
 
 
 def _brd_type(db: Session, code: str = ARTIFACT_CODE) -> ArtifactType:
-    artifact_type = db.scalar(select(ArtifactType).where(ArtifactType.code == code))
+    artifact_type = _once(db, ("type", code), lambda: db.scalar(select(ArtifactType).where(ArtifactType.code == code)))
     if artifact_type is None:
         raise api_error(500, f"{code}_NOT_CONFIGURED", f"The {code} template is missing. Run the database migrations.")
     return artifact_type
@@ -143,11 +163,15 @@ def _code_of(db: Session, artifact_id: int) -> str:
 
 
 def _find_brd(db: Session, project_id: int, artifact_type_id: int) -> ProjectArtifact | None:
-    return db.scalar(
+    key = ("artifact", project_id, artifact_type_id)
+    artifact = _once(db, key, lambda: db.scalar(
         select(ProjectArtifact).where(
             ProjectArtifact.project_id == project_id, ProjectArtifact.artifact_type_id == artifact_type_id
         )
-    )
+    ))
+    if artifact is None:
+        db.info[_CACHE].pop(key)  # may be created later in this request
+    return artifact
 
 
 def _get_or_create_brd(db: Session, project_id: int, user_id: int, code: str = ARTIFACT_CODE) -> ProjectArtifact:
@@ -258,37 +282,37 @@ def approved_answers(
     ]
 
 
+def _answer_stats(db: Session, project_id: int, code: str) -> tuple[int, datetime | None]:
+    """(approved non-empty input answers, newest approval time), in one query."""
+    answer = ProjectCheckpointAnswer
+
+    def load():
+        row = db.execute(
+            select(
+                func.count(case((answer.approved_at.is_not(None) & (func.len(func.ltrim(answer.current_answer)) > 0), 1))),
+                func.max(case((answer.current_answer.is_not(None), answer.approved_at))),
+            )
+            .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == answer.checkpoint_id)
+            .where(answer.project_id == project_id, DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db, code)))
+        ).one()
+        return row[0] or 0, row[1]
+
+    return _once(db, ("answer_stats", project_id, code), load)
+
+
 def approved_answer_count(db: Session, project_id: int, code: str = ARTIFACT_CODE) -> int:
     """How many BRD input answers are approved, without downloading their text."""
-    return db.scalar(
-        select(func.count())
-        .select_from(ProjectCheckpointAnswer)
-        .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
-        .where(
-            ProjectCheckpointAnswer.project_id == project_id,
-            ProjectCheckpointAnswer.approved_at.is_not(None),
-            func.len(func.ltrim(ProjectCheckpointAnswer.current_answer)) > 0,
-            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db, code)),
-        )
-    ) or 0
+    return _answer_stats(db, project_id, code)[0]
 
 
 def latest_approval(db: Session, project_id: int, code: str = ARTIFACT_CODE):
     """When the newest BRD input answer was approved (None when nothing is approved)."""
-    return db.scalar(
-        select(func.max(ProjectCheckpointAnswer.approved_at))
-        .join(DiscoveryCheckpoint, DiscoveryCheckpoint.id == ProjectCheckpointAnswer.checkpoint_id)
-        .where(
-            ProjectCheckpointAnswer.project_id == project_id,
-            ProjectCheckpointAnswer.current_answer.is_not(None),
-            DiscoveryCheckpoint.pillar_id.in_(_brd_pillar_ids(db, code)),
-        )
-    )
+    return _answer_stats(db, project_id, code)[1]
 
 
-def _answers_as_of(db: Session, artifact_id: int):
-    """The newest approval the last successful generate run had read (None when there was none)."""
-    payload = db.scalar(
+def last_generate_payload(db: Session, artifact_id: int) -> dict:
+    """The input_payload of the last successful generate run ({} when there was none)."""
+    return _once(db, ("generate_payload", artifact_id), lambda: json.loads(db.scalar(
         select(AgentRun.input_payload)
         .where(
             AgentRun.project_artifact_id == artifact_id,
@@ -296,8 +320,13 @@ def _answers_as_of(db: Session, artifact_id: int):
             AgentRun.status == "succeeded",
         )
         .order_by(AgentRun.id.desc())
-    )
-    value = json.loads(payload or "{}").get("answers_as_of")
+        .limit(1)
+    ) or "{}"))
+
+
+def _answers_as_of(db: Session, artifact_id: int):
+    """The newest approval the last successful generate run had read (None when there was none)."""
+    value = last_generate_payload(db, artifact_id).get("answers_as_of")
     return datetime.fromisoformat(value) if value else None
 
 

@@ -13,7 +13,6 @@ The other artifact types are listed (the picker shows them) but their draft rout
 """
 
 import io as _io
-import json
 import re
 from pathlib import Path
 
@@ -25,7 +24,6 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import api_error
 from app.db.models import (
-    AgentRun,
     ArtifactType,
     ArtifactTypePillar,
     ContextSource,
@@ -317,7 +315,7 @@ def _export_docx(doc: dict) -> bytes:
         blocks.append(("para", f"**{doc['warning']}**"))
     for s in doc["sections"]:
         blocks.append(("heading", 1, s["heading"]))
-        if s["content"].strip():
+        if (s.get("content") or "").strip():
             blocks += mom_documents.text_to_blocks(s["content"])
         elif s["bullets"]:
             blocks += [("bullet", b, 1) for b in s["bullets"]]
@@ -397,18 +395,12 @@ def _require_generated(code: str) -> str:
 
 
 def _owned_project(db: Session, owner_id: int, project_id: int) -> Project:
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.owner_id == owner_id))
-    if project is None:
-        raise api_error(404, "PROJECT_NOT_FOUND", "Project not found")
-    return project
+    return brd_service._owned_project(db, owner_id, project_id)  # noqa: SLF001 - read once per request
 
 
 def _artifact(db: Session, project_id: int, code: str) -> ProjectArtifact | None:
-    return db.scalar(
-        select(ProjectArtifact)
-        .join(ArtifactType, ArtifactType.id == ProjectArtifact.artifact_type_id)
-        .where(ProjectArtifact.project_id == project_id, ArtifactType.code == code)
-    )
+    # read once per request, shared with brd_service
+    return brd_service._find_brd(db, project_id, brd_service._brd_type(db, code).id)  # noqa: SLF001
 
 
 def _draft_section(s: dict) -> dict:
@@ -447,12 +439,7 @@ def _one_section(db: Session, owner_id: int, project_id: int, section_id: str, c
 def _generation_snapshot(db: Session, artifact: ProjectArtifact | None) -> dict | None:
     if artifact is None:
         return None
-    payload = db.scalar(
-        select(AgentRun.input_payload)
-        .where(AgentRun.project_artifact_id == artifact.id, AgentRun.run_type == "brd_generate", AgentRun.status == "succeeded")
-        .order_by(AgentRun.id.desc())
-    )
-    return json.loads(payload or "{}").get("snapshot")
+    return brd_service.last_generate_payload(db, artifact.id).get("snapshot")
 
 
 def _versions(db: Session, artifact: ProjectArtifact | None) -> list[dict]:
